@@ -5,8 +5,8 @@
 #include <complex>
 #include <vector>
 
-#include <amjPacket.H>
-#include <amjPacketRW.H>
+#include <amjCom/amjPacket.H>
+#include <amjCom/amjPacketRW.H>
 
 class Phasor: public std::complex<float>{
 public:
