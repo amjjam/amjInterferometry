@@ -1,5 +1,6 @@
-prefix=/opt/amj
-
+ifndef prefix
+	prefix=/opt/amj
+endif
 ifndef prefix_amjCom
 	prefix_amjCom=$(prefix)
 endif
