@@ -7,9 +7,6 @@
 #include <cmath>
 #include <cstdint>
 
-//#include <amjCom/amjPacket.H>
-//#include <amjCom/amjPacketRW.H>
-
 #include <iostream>
 
 namespace amjInterferometry{
@@ -185,8 +182,6 @@ namespace amjInterferometry{
     std::vector<T> snrHistory;
     unsigned int iPeakHistory;
     
-    //float scale;
-    
     std::pair<T,T> _delay;
     void computePSpec();
     void computeAveragePSpec();
@@ -296,11 +291,13 @@ namespace amjInterferometry{
   }
 
   // CalcPowerSpectrum
+
   template<typename T>
   CalcPowerSpectrum<T>::~CalcPowerSpectrum() {}
 
   
   // CalcPowerSpectrumFFT
+
   template<typename T>
   void CalcPowerSpectrumFFT<T>::set_wavelength(T _wfirst, T _wlast){
     wfirst=_wfirst;
@@ -337,18 +334,16 @@ namespace amjInterferometry{
 
     // Compute the delays
     double ndk=(1/wlast-1/wfirst);
-    //std::cout << "ndk=" << ndk << std::endl;
-    //std::cout << "pspec.size()=" << pspec.size() << std::endl;
     
     // Compute the Fourier transform
-    std::vector<float> fftDataNR(fftData.size() + 1);
-    std::copy(fftData.begin(), fftData.end(), fftDataNR.begin() + 1);
+    //std::vector<float> fftDataNR(fftData.size() + 1);
+    //std::copy(fftData.begin(), fftData.end(), fftDataNR.begin() + 1);
     
-    four1(fftDataNR.data(), fftData.size()/2, 1);
+    //four1(fftDataNR.data(), fftData.size()/2, 1);
 
-    std::copy(fftDataNR.begin() + 1, fftDataNR.end(), fftData.begin());
+    //std::copy(fftDataNR.begin() + 1, fftDataNR.end(), fftData.begin());
 
-    //four1(fftData.data()-1,fftData.size()/2,1);
+    four1(fftData.data()-1,fftData.size()/2,1);
     for(int i=0;i<(int)pspec.size()/2;i++){
       pspec[i+pspec.size()/2]=fftData[2*i]*fftData[2*i]
 	+fftData[2*i+1]*fftData[2*i+1];
@@ -356,13 +351,12 @@ namespace amjInterferometry{
       pspec[i]=fftData[2*i+pspec.size()]*fftData[2*i+pspec.size()]+
 	fftData[2*i+1+pspec.size()]*fftData[2*i+1+pspec.size()];
       pspec(i)=((double)i-(double)pspec.size()/2)/ndk;
-      //pspec(i)=-10;
-      //std::cout << i << " " << ndk << " " << pspec.size() << " " << pspec(i) <<  " " << pspec(i+pspec.size()/2) << std::endl;
     }  
   }
   
   
   // CalcPowerSpectrumDFT
+
   template<typename T>
   template<typename U>
   void CalcPowerSpectrumDFT<T>::set_delay(const std::vector<U> &d){
