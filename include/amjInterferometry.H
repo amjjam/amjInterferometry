@@ -9,6 +9,8 @@
 
 #include <iostream>
 
+#include <amjTime.H>
+
 namespace amjInterferometry{
   template<typename T=float>
   class Wavelengths{
@@ -37,8 +39,10 @@ namespace amjInterferometry{
   public:
     Phasors(size_t n=0){_p.resize(n);};
     virtual ~Phasors(){};
-    const std::string &name(){return _name;};
-    void name(std::string name){_name=name;};
+    void name(const std::string &n){_name=n;}
+    const std::string &name() const {return _name;};
+    void time(const amjTime &t){_time=t;};
+    const amjTime &time() const {return _time;};
     size_t size() const {return _w.size();};
     void resize(size_t n){_w.resize(n); _p.resize(n);};
     T &operator()(int i){return _w[i];};
@@ -49,10 +53,12 @@ namespace amjInterferometry{
     int write(uint8_t *) const;
     size_t memsize1() const {return 2*sizeof(uint32_t);};
     int read1(uint8_t *);
-    size_t memsize2() const {return _name.length()+_p.size()*3*sizeof(T);};
+    size_t memsize2() const {return _name.length()+_time.size()
+	+_p.size()*3*sizeof(T);};
     int read2(uint8_t *);
   private:
     std::string _name;
+    amjTime _time;
     std::vector<T> _w;
     std::vector<std::complex<T> > _p;
   };
@@ -202,10 +208,10 @@ namespace amjInterferometry{
     Wavelengths w;
     w.name(name);
     w.resize(nL);
-    float B0=1/L0,B1=1/L1;
-    float dB=(B1-B0)/(nL-1);
+    float b0=1/L0,b1=1/L1;
+    float db=(b1-b0)/(nL-1);
     for(unsigned int i=0;i<w.size();i++)
-      w[i]=1/(B0+i*dB);
+      w[i]=1/(b0+i*db);
   }
 
   // Phasors
@@ -214,19 +220,22 @@ namespace amjInterferometry{
   int Phasors<T>::write(uint8_t *pos) const{
     uint32_t s1=_name.length(),s2=_p.size();
     uint8_t *p=pos;
-    p=memcpy(p,&s1,sizeof(uint32_t))+sizeof(uint32_t);
-    p=memcpy(p,&s2,sizeof(uint32_t))+sizeof(uint32_t);
-    p=memcpy(p,&_w.data(),sizeof(T)*_w.size())+sizeof(T)*_w.size();
-    p=memcpy(p,&_p.data(),2*sizeof(T)*_p.size())+2*sizeof(T)*_p.size();
+    memcpy(p,&s1,sizeof(uint32_t)); p+=sizeof(uint32_t);
+    memcpy(p,&s2,sizeof(uint32_t)); p+=sizeof(uint32_t);
+    memcpy(p,_name.data(),_name.length()); p+=_name.length();
+    p+=_time.write(p);
+    memcpy(p,_w.data(),sizeof(T)*_w.size()); p+=sizeof(T)*_w.size();
+    memcpy(p,_p.data(),2*sizeof(T)*_p.size()); p+=2*sizeof(T)*_p.size();
+    return p-pos;
   }
   
   template<typename T>
   int Phasors<T>::read1(uint8_t *pos){
     uint32_t s;
     uint8_t *p=pos;
-    p=memcpy(&s,p,sizeof(uint32_t))+sizeof(uint32_t);
+    memcpy(&s,p,sizeof(uint32_t)); p+=sizeof(uint32_t);
     _name.resize(s);
-    p=memcpy(&s,p,sizeof(uint32_t))+sizeof(uint32_t);
+    memcpy(&s,p,sizeof(uint32_t)); p+=sizeof(uint32_t);
     _w.resize(s);
     _p.resize(s);    
     return sizeof(uint32_t)+s;
@@ -235,9 +244,10 @@ namespace amjInterferometry{
   template<typename T>
   int Phasors<T>::read2(uint8_t *pos){
     uint8_t *p=pos;
-    p=memcpy(_name.data(),p,_name.length())+_name.length();
-    p=memcpy(_w.data(),p,sizeof(T)*_w.size())+sizeof(T)*_w.size();
-    p=memcpy(_p.data(),p,2*sizeof(T)*_p.size())+2*sizeof(T)*_p.size();
+    memcpy(_name.data(),p,_name.length()); p+=_name.length();
+    p+=_time.read(p);
+    memcpy(_w.data(),p,sizeof(T)*_w.size()); p+=sizeof(T)*_w.size();
+    memcpy(_p.data(),p,2*sizeof(T)*_p.size()); p+=2*sizeof(T)*_p.size();
     return p-pos;
   }
 
@@ -379,12 +389,10 @@ namespace amjInterferometry{
     for(unsigned int i=0;i<delay.size();i++){
       pspec(i)=delay[i];
       std::complex<T> sum=0;
-      double angle;
-      std::complex<T> rotation;
+      std::complex<U> rot;
       for(unsigned int j=0;j<phasors.size();j++){
-	angle=2*M_PI*delay[i]/phasors(j);
-	rotation=std::polar(1.0,angle);
-	sum+=phasors[j]*rotation;
+	rot=std::polar(1.0,2*M_PI*delay[i]/phasors(j));
+	sum+=phasors[j]*rot;
       }
       pspec[i]=std::norm(sum);
     }
