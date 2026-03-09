@@ -67,30 +67,33 @@ namespace amjInterferometry{
   class PowerSpectrum{
   public:
     PowerSpectrum(){}
-    virtual ~PowerSpectrum(){};
-    void clear(){_delay.resize(0); _power.resize(0);};
-    T &operator[](int i){return _power[i];};
-    const T &operator[](int i) const {return _power[i];};
-    T &operator()(int i){return _delay[i];};
+    virtual ~PowerSpectrum(){}
+    void name(std::string n){_name=n;}
+    const std::string &name() const {return _name;}
+    void clear(){_name.clear(); _delay.resize(0); _power.resize(0);}
+    T &operator[](int i){return _power[i];}
+    const T &operator[](int i) const {return _power[i];}
+    T &operator()(int i){return _delay[i];}
     const T &operator()(int i) const {return _delay[i];}
     const std::vector<T> &delay(){return _delay;}
     const std::vector<T> &power(){return _power;}
-    size_t size() const {return _delay.size();};
-    void resize(size_t s){_delay.resize(s); _power.resize(s);};
-    size_t memsize() const {return memsize1()+memsize2();};
+    size_t size() const {return _delay.size();}
+    void resize(size_t s){_delay.resize(s); _power.resize(s);}
+    size_t memsize() const {return memsize1()+memsize2();}
     int write(uint8_t *) const;
-    size_t memsize1() const {return sizeof(uint32_t);};
+    size_t memsize1() const {return 2*sizeof(uint32_t);}
     int read1(uint8_t *);
-    size_t memsize2() const {return sizeof(T)*2*_delay.size();}
+    size_t memsize2() const {return _name.size()+sizeof(T)*2*_delay.size();}
     int read2(uint8_t *);
     template<typename U=float>
     void operator+=(const PowerSpectrum<U> &ps);
     template<typename U=float>
     void operator/=(U);
   private:
+    std::string _name;
     std::vector<T> _delay,_power;
   };
-
+  
   template<typename T=float>
   class CalcPowerSpectrum{
   public:
@@ -133,8 +136,8 @@ namespace amjInterferometry{
     ~CalcPowerSpectrumDFT(){};
     template<typename U>
     void set_delay(const std::vector<U> &);
-    template<typename U>
-    void set_delay(const std::vector<std::vector<U> > &);
+    //template<typename U>
+    //void set_delay(const std::vector<std::vector<U> > &);
     template<typename U, typename V>
     void operator()(const Phasors<U> &, PowerSpectrum<V> &);
     template<typename U, typename V>
@@ -258,29 +261,36 @@ namespace amjInterferometry{
 
   template<typename T>
   int PowerSpectrum<T>::write(uint8_t *pp) const{
-    uint32_t tmp=_delay.size();
-    uint8_t *p=(uint8_t *)memcpy(pp,&tmp,sizeof(uint32_t))+sizeof(T);
-    p=(uint8_t *)memcpy(p,_delay.data(),sizeof(T)*_delay.size())
-      +sizeof(T)*_delay.size();
-    return (uint8_t *)memcpy(p,_power.data(),sizeof(T)*_power.size())
-      +sizeof(T)*_power.size()-pp;
+    uint8_t *p=pp;
+    uint32_t tmp=_name.size();
+    memcpy(p,&tmp,sizeof(uint32_t)); p+=sizeof(uint32_t);
+    tmp=_delay.size();
+    memcpy(p,&tmp,sizeof(uint32_t)); p+=sizeof(T);
+    memcpy(p,_name.data(),_name.size()); p+=_name.size();
+    memcpy(p,_delay.data(),sizeof(T)*_delay.size()); p+=sizeof(T)*_delay.size();
+    memcpy(p,_power.data(),sizeof(T)*_power.size()); p+=sizeof(T)*_power.size();
+    return p-pp;
   }
 
   template<typename T>
   int PowerSpectrum<T>::read1(uint8_t *pp){
-    uint32_t s;
-    memcpy(&s,pp,sizeof(uint32_t));
+    uint8_t *p=pp;
+    uint32_t s;    
+    memcpy(&s,p,sizeof(uint32_t)); p+=sizeof(uint32_t);
+    _name.resize(s);
+    memcpy(&s,p,sizeof(uint32_t)); p+=sizeof(uint32_t);
     _delay.resize(s);
     _power.resize(s);
-    return sizeof(uint32_t);
+    return p-pp;
   }
 
   template<typename T>
   int PowerSpectrum<T>::read2(uint8_t *pp){
-    uint8_t *p=(uint8_t *)memcpy(_delay.data(),p,sizeof(T)*_delay.size())
-      +sizeof(T)*_delay.size();
-    return (uint8_t *)memcpy(_power.data(),p,sizeof(T)*_power.size())
-      +sizeof(T)*_power.size()-pp;
+    uint8_t *p=pp;
+    memcpy(_name.data(),p,_name.size()); p+=_name.size();
+    memcpy(_delay.data(),p,sizeof(T)*_delay.size()); p+=sizeof(T)*_delay.size();
+    memcpy(_power.data(),p,sizeof(T)*_power.size()); p+=sizeof(T)*_power.size();
+    return p-pp;
   }
   
   template<typename T>
@@ -375,11 +385,11 @@ namespace amjInterferometry{
       delay[i]=d[i];
   }
   
-  template<typename T>
-  template<typename U>
-  void CalcPowerSpectrumDFT<T>::set_delay(const std::vector<std::vector<U> > &d){
+  // template<typename T>
+  // template<typename U>
+  // void CalcPowerSpectrumDFT<T>::set_delay(const std::vector<std::vector<U> > &d){
     
-  }
+  // }
 
   template<typename T>
   template<typename U, typename V>
