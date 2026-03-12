@@ -336,6 +336,7 @@ namespace amjInterferometry{
   template<typename U, typename V>
   void CalcPowerSpectrumFFT<T>::operator()(const Phasors<U> &phasors,
 					   PowerSpectrum<V> &pspec){
+    pspec.name(phasors.name());
     // The length of fftData must be the smallest power of 2 which is
     // at least 2*nOver*phasors.size()
     size_t nFFT=1;
@@ -395,6 +396,7 @@ namespace amjInterferometry{
   template<typename U, typename V>
   void CalcPowerSpectrumDFT<T>::operator()(const Phasors<U> &phasors,
 					   PowerSpectrum<V> &pspec){
+    pspec.name(phasors.name());
     pspec.resize(delay.size());
     for(unsigned int i=0;i<delay.size();i++){
       pspec(i)=delay[i];
