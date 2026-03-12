@@ -70,6 +70,8 @@ namespace amjInterferometry{
     virtual ~PowerSpectrum(){}
     void name(std::string n){_name=n;}
     const std::string &name() const {return _name;}
+    void time(const amjTime &t){_time=t;};
+    const amjTime &time() const {return _time;};
     void clear(){_name.clear(); _delay.resize(0); _power.resize(0);}
     T &operator[](int i){return _power[i];}
     const T &operator[](int i) const {return _power[i];}
@@ -83,7 +85,8 @@ namespace amjInterferometry{
     int write(uint8_t *) const;
     size_t memsize1() const {return 2*sizeof(uint32_t);}
     int read1(uint8_t *);
-    size_t memsize2() const {return _name.size()+sizeof(T)*2*_delay.size();}
+    size_t memsize2() const {return _name.size()+_time.size()
+	+sizeof(T)*2*_delay.size();}
     int read2(uint8_t *);
     template<typename U=float>
     void operator+=(const PowerSpectrum<U> &ps);
@@ -91,6 +94,7 @@ namespace amjInterferometry{
     void operator/=(U);
   private:
     std::string _name;
+    amjTime _time;
     std::vector<T> _delay,_power;
   };
   
@@ -261,12 +265,12 @@ namespace amjInterferometry{
 
   template<typename T>
   int PowerSpectrum<T>::write(uint8_t *pp) const{
+    uint32_t s1=_name.size(),s2=_delay.size();
     uint8_t *p=pp;
-    uint32_t tmp=_name.size();
-    memcpy(p,&tmp,sizeof(uint32_t)); p+=sizeof(uint32_t);
-    tmp=_delay.size();
-    memcpy(p,&tmp,sizeof(uint32_t)); p+=sizeof(T);
+    memcpy(p,&s1,sizeof(uint32_t)); p+=sizeof(uint32_t);
+    memcpy(p,&s2,sizeof(uint32_t)); p+=sizeof(T);
     memcpy(p,_name.data(),_name.size()); p+=_name.size();
+    p+=_time.write(p);
     memcpy(p,_delay.data(),sizeof(T)*_delay.size()); p+=sizeof(T)*_delay.size();
     memcpy(p,_power.data(),sizeof(T)*_power.size()); p+=sizeof(T)*_power.size();
     return p-pp;
@@ -288,6 +292,7 @@ namespace amjInterferometry{
   int PowerSpectrum<T>::read2(uint8_t *pp){
     uint8_t *p=pp;
     memcpy(_name.data(),p,_name.size()); p+=_name.size();
+    p+=_time.read(p);
     memcpy(_delay.data(),p,sizeof(T)*_delay.size()); p+=sizeof(T)*_delay.size();
     memcpy(_power.data(),p,sizeof(T)*_power.size()); p+=sizeof(T)*_power.size();
     return p-pp;
@@ -337,6 +342,7 @@ namespace amjInterferometry{
   void CalcPowerSpectrumFFT<T>::operator()(const Phasors<U> &phasors,
 					   PowerSpectrum<V> &pspec){
     pspec.name(phasors.name());
+    pspec.time(phasors.time());
     // The length of fftData must be the smallest power of 2 which is
     // at least 2*nOver*phasors.size()
     size_t nFFT=1;
@@ -397,6 +403,7 @@ namespace amjInterferometry{
   void CalcPowerSpectrumDFT<T>::operator()(const Phasors<U> &phasors,
 					   PowerSpectrum<V> &pspec){
     pspec.name(phasors.name());
+    pspec.time(phasors.time());
     pspec.resize(delay.size());
     for(unsigned int i=0;i<delay.size();i++){
       pspec(i)=delay[i];
