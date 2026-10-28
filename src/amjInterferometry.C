@@ -1,4 +1,4 @@
-#include "../include/amjInterferometry.H"
+#include "amjInterferometry.H"
 
 #include <iostream>
 
@@ -7,11 +7,16 @@ namespace amjInterferometry{
 #include <math.h>
 #define SWAP(a,b) tempr=(a);(a)=(b);(b)=tempr
   
-  void four1(float data[], unsigned long nn, int isign)
+  template<typename T>
+  void four1_impl(T data[], unsigned long nn, int isign)
   {
     unsigned long n,mmax,m,j,istep,i;
     double wtemp,wr,wpr,wpi,wi,theta;
-    float tempr,tempi;
+    T tempr,tempi;
+    if(!data || nn==0 || (nn & (nn-1)) ||
+       nn > std::numeric_limits<unsigned long>::max()/2 ||
+       (isign != 1 && isign != -1))
+      throw std::invalid_argument("Invalid four1 arguments");
     
     n=nn << 1;
     j=1;
@@ -51,6 +56,12 @@ namespace amjInterferometry{
       }
       mmax=istep;
     }
+  }
+  void four1(float data[], unsigned long nn, int isign){
+    four1_impl(data,nn,isign);
+  }
+  void four1(double data[], unsigned long nn, int isign){
+    four1_impl(data,nn,isign);
   }
 #undef SWAP
   // End stolen from Numerical Recipes
