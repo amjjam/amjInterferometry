@@ -37,7 +37,7 @@ namespace amjInterferometry{
   template<typename T=float>
   class Phasors{
   public:
-    Phasors(size_t n=0){_p.resize(n);};
+    Phasors(size_t n=0){_w.resize(n); _p.resize(n);};
     virtual ~Phasors(){};
     void name(const std::string &n){_name=n;}
     const std::string &name() const {return _name;};
@@ -49,6 +49,8 @@ namespace amjInterferometry{
     const T &operator()(int i) const {return _w[i];}; 
     std::complex<T>& operator[](int i){return _p[i];};
     const std::complex<T>& operator[](int i) const {return _p[i];};
+    template<typename U>
+    Phasors<T>& operator+=(const Phasors<U>& other);
     size_t memsize() const {return memsize1()+memsize2();};
     int write(uint8_t *) const;
     size_t memsize1() const {return 2*sizeof(uint32_t);};
@@ -92,12 +94,12 @@ namespace amjInterferometry{
     void operator+=(const PowerSpectrum<U> &ps);
     template<typename U=float>
     void operator/=(U);
-  private:
+  protected:
     std::string _name;
     amjTime _time;
     std::vector<T> _delay,_power;
   };
-  
+
   template<typename T=float>
   class CalcPowerSpectrum{
   public:
@@ -224,6 +226,19 @@ namespace amjInterferometry{
   // Phasors
 
   template<typename T>
+  template<typename U>
+  Phasors<T>& Phasors<T>::operator+=(const Phasors<U>& other){
+    if (_w.size() != other.size())
+      throw std::runtime_error("Phasors size mismatch");
+    
+    for (size_t i = 0; i < other.size(); ++i) {
+      _p[i] += other[i];
+    }
+    
+    return *this;
+  }
+  
+  template<typename T>
   int Phasors<T>::write(uint8_t *pos) const{
     uint32_t s1=_name.length(),s2=_p.size();
     uint8_t *p=pos;
@@ -315,6 +330,89 @@ namespace amjInterferometry{
       _power[i]/=f;
   }
 
+  // Gaussian
+  // 1/\sqrt{2pi}/sigma*exp(-(x-mu)^2/2\sigma^2)
+  double gaussian(double x, double m, double s){
+    return 1.0/sqrt(2*M_PI)/s*exp(-(x-m)*(x-m)/2.0/s/s);
+  }
+  
+  // SmoothPowerSpectrum
+  template<typename T, typename U>
+  PowerSpectrum<T> gsmooth(const PowerSpectrum<T> &p, U s){
+    PowerSpectrum<T> _p=p;
+    double t,g,s;
+    for(size_t i=0;i<p.size();i++){
+      g=0;
+      s=0;
+      for(size_t j=0;j<p.size();j++){
+	t=gaussian(p(j),p(i),s);
+	s+=p[j];
+	g+=t;
+      }
+      _p[i]=s/g;
+    }
+    return _p;
+  }
+
+  template<typename T, typename U>
+  PowerSpectrum<T> bsmooth(const PowerSpectrum<T> &p, U w){
+    PowerSpectrum<T> _p=p;
+    double t,g,s;
+    for(size_t i=0;i<p.size();i++){
+      g=0;
+      s=0;
+      for(size_t j=0;j<p.size();j++){
+	if(fabs(p(j)-p(i))<w/2){
+	  g++;
+	  s+=p[j];
+	}
+      }
+      _p[i]=s/g;
+    }
+    return _p;
+  }
+
+  template<typename T>
+  class SmoothPowerSpectrum<T>: public PowerSpectrum<T>{
+  public:
+    SmoothPowerSpectrum(){};
+    virtual ~SmoothPowerSpectrum(){};
+    template<typename U>
+    SmoothPowerSpectrum<T> &add(PowerSpectrum<U> &)=0;
+  private:
+    
+  };
+
+  template<typename T>
+  class BoxcarSmoothPowerSpectrum<T>: public SmoothPowerSpectrum<T>{
+  public:
+    BoxcarSmoothPowerSpectrum(size_t n):n(n);
+    virtual ~BoxcarSmoothPowerSpectrum(){};
+    template<typename U>
+    BoxcarSmoothPowerSpectrum<T> &add(PowerSpectrum<U> &);
+  private:
+    size_t n;
+  };
+  
+  template<typename T>
+  class LeakyboxSmoothPowerSpectrum<T>: public SmoothPowerSpectrum<T>{
+  public:
+    SmoothLeakyPowerSpectrum(size_t n):n(n){};
+    virtual SmoothLeakyPowerSpectrum(){};
+    template<typename U>
+    LeakyboxSmoothPowerSpectrum<T> &add(PowerSpectrum<U> &);
+  private:
+    size_t n;
+  };
+
+  template<typename T>
+  template<typename U>
+  LeakyboxSmoothPowerSpecrum<T> &
+  LeakyboxSmoothPowerSpectrum<T>::add(PowerSpectrum<U> &){
+
+    return *this;
+  }
+    
   // CalcPowerSpectrum
 
   template<typename T>
@@ -417,6 +515,27 @@ namespace amjInterferometry{
     }
   }
   
+  template<typename T>
+  template<typename U, typename V>
+  void CalcPowerSpectrumDFT<T>::operator()(const std::vector<Phasors<U> > &ph,
+					   std::vector<PowerSpectrum<V> > &ps){
+    ps.resize(ph.size());
+    for(size_t i=0;i<ph.size();i++)
+      operator()(ph[i],ps[i]);
+  }
+  
+  template<typename T=float>
+  class AnalyzePowerSpectrum{
+  public:
+    AnalyzePowerSpectrum():peak_width(40){};
+    ~AnalyzePowerSpectrum(){};
+    template<typename U, typename V>
+    void operator()(const PowerSpectrum<U> &, V &SNR, V &delay);
+    template<typename U>
+    void set_peak_width(U w){peak_width=w;}
+  private:
+    T peak_width;
+  };
   
   // DelayMachine
 
@@ -524,8 +643,34 @@ namespace amjInterferometry{
     return j;
   }
   
+  template<typename T>
+  template<typename U, typename V>
+  void AnalyzePowerSpectrum<T>::operator()(const PowerSpectrum<U> &p, V &snr,
+					   V &delay){
+    int imax=-1;
+    T peak=-1e31;
+    
+    for(int i=0;i<p.size();i++)
+      if(p[i]>peak){
+	imax=i;
+	peak=p[i];
+      }
+    
+    delay=p(imax);
+    
+    int count=0;
+    T v=0,v2=0;
+    for(int i=0;i<p.size();i++)
+      if(p(i)<delay-peak_width/2||p(i)>delay+peak_width/2){
+	count++;
+	v+=p[i];
+	v2+=p[i]*p[i];
+      }
+
+    T mean=v/count;
+    
+    snr=(peak-mean)/sqrt(v2/count-mean*mean);      
+  }
 }
-
-
 
 #endif /* _AMJINTERFEROMETRY */
