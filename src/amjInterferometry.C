@@ -1,4 +1,4 @@
-#include "amjInterferometry.H"
+#include "../include/amjInterferometry.H"
 
 #include <iostream>
 
@@ -65,4 +65,75 @@ namespace amjInterferometry{
   }
 #undef SWAP
   // End stolen from Numerical Recipes
+
+DelayMachine::DelayMachine(std::string name, Calculator calculator,
+                           int nIncoherent, int nSmooth, Analyzer analyzer)
+    : _name(std::move(name)), calculateSpectrum(std::move(calculator)),
+      analyzeSpectrum(std::move(analyzer)) {
+  if(nIncoherent<1 || nSmooth<1)
+    throw std::invalid_argument("DelayMachine history lengths must be positive");
+  if(!calculateSpectrum || !analyzeSpectrum)
+    throw std::invalid_argument("DelayMachine requires a calculator and analyzer");
+  pSpecHistory.resize(static_cast<size_t>(nIncoherent));
+  peakHistory.resize(static_cast<size_t>(nSmooth),0);
+  snrHistory.resize(static_cast<size_t>(nSmooth),0);
+}
+
+void DelayMachine::set_calculator(Calculator calculator) {
+  if(!calculator) throw std::invalid_argument("Empty spectrum calculator");
+  calculateSpectrum=std::move(calculator);
+  reset();
+}
+
+void DelayMachine::set_analyzer(Analyzer analyzer) {
+  if(!analyzer) throw std::invalid_argument("Empty spectrum analyzer");
+  analyzeSpectrum=std::move(analyzer);
+  reset();
+}
+
+void DelayMachine::reset() {
+  for(auto& spectrum : pSpecHistory) spectrum.clear();
+  pSpec.clear();
+  pSpec.time(amjTime());
+  std::fill(peakHistory.begin(),peakHistory.end(),0);
+  std::fill(snrHistory.begin(),snrHistory.end(),0);
+  ipSpecHistory=0;
+  iPeakHistory=0;
+  _delay=0;
+  _snr=0;
+}
+
+void DelayMachine::load(const Phasors& phasors) {
+  calculateSpectrum(phasors,pSpecHistory[ipSpecHistory]);
+  if(pSpecHistory[ipSpecHistory].size()==0)
+    throw std::invalid_argument("Calculator returned an empty spectrum");
+
+  // Preserve the existing summation order, including startup with partial history.
+  pSpec=pSpecHistory[ipSpecHistory];
+  size_t n=1; // The newest spectrum is already included.
+  for(size_t i=0;i<pSpecHistory.size();i++) {
+    if(i==ipSpecHistory || pSpecHistory[i].size()!=pSpec.size()) continue;
+    pSpec+=pSpecHistory[i];
+    ++n;
+  }
+  ipSpecHistory=(ipSpecHistory+1)%pSpecHistory.size();
+  pSpec/=n;
+  // Adding history entries copies their timestamps; report the newest input.
+  pSpec.time(phasors.time());
+
+  analyzeSpectrum(pSpec,snrHistory[iPeakHistory],peakHistory[iPeakHistory]);
+  iPeakHistory=(iPeakHistory+1)%peakHistory.size();
+
+  // Preserve existing smoothing: unused startup entries are zero, and the
+  // divisor is always the configured smoothing length.
+  _delay=0;
+  _snr=0;
+  for(size_t i=0;i<peakHistory.size();i++) {
+    _delay+=peakHistory[i];
+    _snr+=snrHistory[i];
+  }
+  _delay/=peakHistory.size();
+  _snr/=peakHistory.size();
+}
+
 }
