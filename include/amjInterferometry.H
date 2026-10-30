@@ -361,7 +361,7 @@ namespace amjInterferometry{
   template<typename T, typename U>
   PowerSpectrum<T> bsmooth(const PowerSpectrum<T> &p, U w){
     PowerSpectrum<T> _p=p;
-    double t,g,s;
+    double g,s;
     for(size_t i=0;i<p.size();i++){
       g=0;
       s=0;
@@ -376,49 +376,7 @@ namespace amjInterferometry{
     return _p;
   }
 
-#if 0 // Unfinished temporal smoothing classes; not yet a supported API.
-  template<typename T>
-  class SmoothPowerSpectrum<T>: public PowerSpectrum<T>{
-  public:
-    SmoothPowerSpectrum(){};
-    virtual ~SmoothPowerSpectrum(){};
-    template<typename U>
-    SmoothPowerSpectrum<T> &add(PowerSpectrum<U> &)=0;
-  private:
-    
-  };
 
-  template<typename T>
-  class BoxcarSmoothPowerSpectrum<T>: public SmoothPowerSpectrum<T>{
-  public:
-    BoxcarSmoothPowerSpectrum(size_t n):n(n);
-    virtual ~BoxcarSmoothPowerSpectrum(){};
-    template<typename U>
-    BoxcarSmoothPowerSpectrum<T> &add(PowerSpectrum<U> &);
-  private:
-    size_t n;
-  };
-  
-  template<typename T>
-  class LeakyboxSmoothPowerSpectrum<T>: public SmoothPowerSpectrum<T>{
-  public:
-    SmoothLeakyPowerSpectrum(size_t n):n(n){};
-    virtual SmoothLeakyPowerSpectrum(){};
-    template<typename U>
-    LeakyboxSmoothPowerSpectrum<T> &add(PowerSpectrum<U> &);
-  private:
-    size_t n;
-  };
-
-  template<typename T>
-  template<typename U>
-  LeakyboxSmoothPowerSpecrum<T> &
-  LeakyboxSmoothPowerSpectrum<T>::add(PowerSpectrum<U> &){
-
-    return *this;
-  }
-    
-#endif
 
   // CalcPowerSpectrum
 
@@ -583,44 +541,90 @@ namespace amjInterferometry{
   
 
 
-// One concrete phasors -> power spectrum -> delay/SNR pipeline.
-// Configuration changes must not run concurrently with load().
-class DelayMachine {
-public:
-  using Phasors = amjInterferometry::Phasors<float>;
-  using PowerSpectrum = amjInterferometry::PowerSpectrum<float>;
-  using Calculator = std::function<void(const Phasors&, PowerSpectrum&)>;
-  // The analyzer argument order matches AnalyzePowerSpectrum: SNR, then delay.
-  using Analyzer = std::function<void(const PowerSpectrum&, float&, float&)>;
-
-  DelayMachine(std::string name, Calculator calculator,
-               int nIncoherent, int nSmooth,
-               Analyzer analyzer=amjInterferometry::AnalyzePowerSpectrum<float>());
-
-  const std::string& name() const { return _name; }
-  void load(const Phasors& phasors);
-  float delay() const { return _delay; }
-  float snr() const { return _snr; }
-  const amjTime& time() const { return pSpec.time(); }
-  const PowerSpectrum& p() const { return pSpec; }
-
-  // Both setters reset history. Configure callable objects before installation.
-  void set_calculator(Calculator calculator);
-  void set_analyzer(Analyzer analyzer);
-  void reset();
-
-private:
-  std::string _name;
-  Calculator calculateSpectrum;
-  Analyzer analyzeSpectrum;
-  PowerSpectrum pSpec;
-  std::vector<PowerSpectrum> pSpecHistory;
-  size_t ipSpecHistory=0;
-  std::vector<float> peakHistory, snrHistory;
-  size_t iPeakHistory=0;
-  float _delay=0, _snr=0;
+// Widths: sample counts for time/output; delay units for the delay axis.
+struct DelayMachineConfig {
+  enum class TemporalMethod { None, Boxcar, Leaky };
+  enum class AxisMethod { None, Boxcar, Gaussian };
+  TemporalMethod time_method=TemporalMethod::Boxcar;
+  unsigned int time_width=5;
+  AxisMethod delay_axis_method=AxisMethod::None;
+  float delay_axis_width=0;
+  float peak_exclusion_width=40;
+  TemporalMethod output_method=TemporalMethod::None;
+  unsigned int output_width=1;
+  bool operator==(const DelayMachineConfig&) const;
+  bool operator!=(const DelayMachineConfig& c) const {return !(*this==c);}
+  void validate() const;
 };
 
+// A temporal smoother IS a PowerSpectrum; add() copies the newest metadata.
+// Stable delay grids are a caller contract until reset/configure.
+class SmoothPowerSpectrum : public PowerSpectrum<float> {
+public:
+  using Method=DelayMachineConfig::TemporalMethod;
+  SmoothPowerSpectrum(Method method=Method::Boxcar, unsigned int width=5);
+  void configure(Method method, unsigned int width);
+  void reset();
+  void add(const PowerSpectrum<float>&);
+private:
+  Method method_;
+  unsigned int width_;
+  float decay_=0;
+  size_t next_=0, count_=0;
+  std::vector<PowerSpectrum<float>> history_;
+};
+class BoxcarSmoothPowerSpectrum : public SmoothPowerSpectrum {
+public:
+  explicit BoxcarSmoothPowerSpectrum(unsigned int width=5)
+    : SmoothPowerSpectrum(Method::Boxcar,width) {}
+};
+class LeakyboxSmoothPowerSpectrum : public SmoothPowerSpectrum {
+public:
+  explicit LeakyboxSmoothPowerSpectrum(unsigned int width=5)
+    : SmoothPowerSpectrum(Method::Leaky,width) {}
+};
+
+  class DelayMachine {
+  public:
+    using Config=DelayMachineConfig;
+    using Phasors=amjInterferometry::Phasors<float>;
+    using PowerSpectrum=amjInterferometry::PowerSpectrum<float>;
+    using Calculator=std::function<void(const Phasors&,PowerSpectrum&)>;
+    using Analyzer=std::function<void(const PowerSpectrum&,float&,float&)>;
+    // Compatibility overload preserves the old zero-filled output startup.
+    DelayMachine(std::string,Calculator,int nIncoherent,int nSmooth,
+		 Analyzer analyzer=AnalyzePowerSpectrum<float>());
+    DelayMachine(std::string,Calculator,const Config& config=Config());
+    const std::string& name() const {return _name;}
+    void load(const Phasors&);
+    float delay() const {return _delay;}
+    float snr() const {return _snr;}
+    const amjTime& time() const {return pSpec.time();}
+    const PowerSpectrum& p() const {return pSpec;}
+    const Config& config() const {return config_;}
+    void set_config(const Config&);
+    void set_calculator(Calculator);
+    // Custom analyzers replace the default; peak_exclusion_width then has no effect.
+    void set_analyzer(Analyzer);
+    void use_default_analyzer();
+    void reset();
+  private:
+    void build_axis_weights();
+    std::string _name;
+    Config config_;
+    Calculator calculateSpectrum;
+    Analyzer analyzeSpectrum;
+    bool customAnalyzer_=false, legacyOutputStartup_=false;
+    PowerSpectrum raw_,pSpec;
+    SmoothPowerSpectrum temporal_;
+    std::vector<float> peakHistory,snrHistory;
+    size_t nextOutput_=0,outputCount_=0;
+    float outputDecay_=0,_delay=0,_snr=0;
+    // Sparse normalized kernel, built once per configuration/grid size.
+    std::vector<size_t> axisOffsets_,axisIndices_;
+    std::vector<double> axisWeights_;
+  };
+  
   template<typename T>
   int findMax(std::vector<T> &p){
     int j=p.size()/2;

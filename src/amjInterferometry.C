@@ -66,74 +66,148 @@ namespace amjInterferometry{
 #undef SWAP
   // End stolen from Numerical Recipes
 
-DelayMachine::DelayMachine(std::string name, Calculator calculator,
-                           int nIncoherent, int nSmooth, Analyzer analyzer)
-    : _name(std::move(name)), calculateSpectrum(std::move(calculator)),
-      analyzeSpectrum(std::move(analyzer)) {
-  if(nIncoherent<1 || nSmooth<1)
-    throw std::invalid_argument("DelayMachine history lengths must be positive");
-  if(!calculateSpectrum || !analyzeSpectrum)
-    throw std::invalid_argument("DelayMachine requires a calculator and analyzer");
-  pSpecHistory.resize(static_cast<size_t>(nIncoherent));
-  peakHistory.resize(static_cast<size_t>(nSmooth),0);
-  snrHistory.resize(static_cast<size_t>(nSmooth),0);
+bool DelayMachineConfig::operator==(const DelayMachineConfig& c) const {
+  return time_method==c.time_method && time_width==c.time_width &&
+    delay_axis_method==c.delay_axis_method && delay_axis_width==c.delay_axis_width &&
+    peak_exclusion_width==c.peak_exclusion_width &&
+    output_method==c.output_method && output_width==c.output_width;
 }
-
-void DelayMachine::set_calculator(Calculator calculator) {
-  if(!calculator) throw std::invalid_argument("Empty spectrum calculator");
-  calculateSpectrum=std::move(calculator);
-  reset();
+void DelayMachineConfig::validate() const {
+  using T=TemporalMethod; using A=AxisMethod;
+  auto valid=[](T m){return m==T::None || m==T::Boxcar || m==T::Leaky;};
+  if(!valid(time_method)||!valid(output_method)||
+     (delay_axis_method!=A::None && delay_axis_method!=A::Boxcar && delay_axis_method!=A::Gaussian)||
+     !time_width || !output_width || !std::isfinite(delay_axis_width)||
+     delay_axis_width<0 || (delay_axis_method!=A::None && delay_axis_width==0)||
+     !std::isfinite(peak_exclusion_width)||peak_exclusion_width<0)
+    throw std::invalid_argument("Invalid DelayMachine configuration");
 }
-
-void DelayMachine::set_analyzer(Analyzer analyzer) {
-  if(!analyzer) throw std::invalid_argument("Empty spectrum analyzer");
-  analyzeSpectrum=std::move(analyzer);
-  reset();
+SmoothPowerSpectrum::SmoothPowerSpectrum(Method m,unsigned int w){configure(m,w);}
+void SmoothPowerSpectrum::configure(Method m,unsigned int w){
+  DelayMachineConfig c;c.time_method=m;c.time_width=w;c.validate();
+  method_=m;width_=w;decay_=std::exp(-1.0f/w);
+  history_.resize(m==Method::Boxcar?w:0);reset();
 }
-
-void DelayMachine::reset() {
-  for(auto& spectrum : pSpecHistory) spectrum.clear();
-  pSpec.clear();
-  pSpec.time(amjTime());
+void SmoothPowerSpectrum::reset(){
+  clear();time(amjTime());next_=count_=0;
+  for(auto& p:history_)p.clear();
+}
+void SmoothPowerSpectrum::add(const PowerSpectrum<float>& p){
+  if(!p.size())throw std::invalid_argument("Empty smoothing input");
+  if(size() && size()!=p.size())throw std::invalid_argument("Smoothing size changed; reset first");
+  if(method_==Method::None){PowerSpectrum<float>::operator=(p);return;}
+  if(method_==Method::Leaky){
+    if(!size())PowerSpectrum<float>::operator=(p);
+    else {
+      for(size_t i=0;i<size();++i)(*this)[i]=decay_*(*this)[i]+(1-decay_)*p[i];
+      name(p.name());time(p.time());
+    }
+    return;
+  }
+  history_[next_]=p;
+  PowerSpectrum<float>::operator=(p);
+  count_=std::min(count_+1,static_cast<size_t>(width_));
+  for(size_t j=0;j<count_;++j)if(j!=next_)
+    for(size_t i=0;i<size();++i)(*this)[i]+=history_[j][i];
+  (*this)/=count_;
+  next_=(next_+1)%width_;
+}
+DelayMachine::DelayMachine(std::string name,Calculator calc,const Config& c)
+ : _name(std::move(name)),calculateSpectrum(std::move(calc)) {
+  if(!calculateSpectrum)throw std::invalid_argument("Empty spectrum calculator");
+  c.validate();config_=c;
+  temporal_.configure(c.time_method,c.time_width);
+  peakHistory.resize(c.output_width);snrHistory.resize(c.output_width);
+  outputDecay_=std::exp(-1.0f/c.output_width);
+  use_default_analyzer();
+}
+DelayMachine::DelayMachine(std::string name,Calculator calc,int ni,int ns,Analyzer analyzer)
+ : DelayMachine(std::move(name),std::move(calc),[&]{
+     if(ni<1||ns<1)throw std::invalid_argument("History lengths must be positive");
+     Config c;c.time_width=ni;c.output_method=Config::TemporalMethod::Boxcar;c.output_width=ns;return c;
+   }()) {
+  if(!analyzer)throw std::invalid_argument("Empty spectrum analyzer");
+  // Recognize the default callable so peak width remains configurable.
+  customAnalyzer_=analyzer.target<AnalyzePowerSpectrum<float>>()==nullptr;
+  analyzeSpectrum=std::move(analyzer);legacyOutputStartup_=true;
+}
+void DelayMachine::set_config(const Config& c){
+  c.validate();if(c==config_)return;
+  const bool timeChange=c.time_method!=config_.time_method||c.time_width!=config_.time_width;
+  const bool axisChange=c.delay_axis_method!=config_.delay_axis_method||c.delay_axis_width!=config_.delay_axis_width;
+  const bool analysisChange=c.peak_exclusion_width!=config_.peak_exclusion_width;
+  if(timeChange)temporal_.configure(c.time_method,c.time_width);
+  if(timeChange||axisChange){axisOffsets_.clear();pSpec.clear();}
+  // Any changed upstream weighting invalidates the final output history.
+  peakHistory.assign(c.output_width,0);snrHistory.assign(c.output_width,0);
+  nextOutput_=outputCount_=0;_delay=_snr=0;
+  config_=c;legacyOutputStartup_=false;outputDecay_=std::exp(-1.0f/c.output_width);
+  if(analysisChange&&!customAnalyzer_){
+    AnalyzePowerSpectrum<float> a;a.set_peak_width(c.peak_exclusion_width);analyzeSpectrum=a;
+  }
+}
+void DelayMachine::set_calculator(Calculator c){
+  if(!c)throw std::invalid_argument("Empty spectrum calculator");
+  calculateSpectrum=std::move(c);reset();
+}
+void DelayMachine::set_analyzer(Analyzer a){
+  if(!a)throw std::invalid_argument("Empty spectrum analyzer");
+  analyzeSpectrum=std::move(a);customAnalyzer_=true;reset();
+}
+void DelayMachine::use_default_analyzer(){
+  AnalyzePowerSpectrum<float> a;a.set_peak_width(config_.peak_exclusion_width);
+  analyzeSpectrum=a;customAnalyzer_=false;reset();
+}
+void DelayMachine::reset(){
+  raw_.clear();temporal_.reset();pSpec.clear();pSpec.time(amjTime());
+  axisOffsets_.clear();axisIndices_.clear();axisWeights_.clear();
   std::fill(peakHistory.begin(),peakHistory.end(),0);
   std::fill(snrHistory.begin(),snrHistory.end(),0);
-  ipSpecHistory=0;
-  iPeakHistory=0;
-  _delay=0;
-  _snr=0;
+  nextOutput_=outputCount_=0;_delay=_snr=0;
 }
-
-void DelayMachine::load(const Phasors& phasors) {
-  calculateSpectrum(phasors,pSpecHistory[ipSpecHistory]);
-  if(pSpecHistory[ipSpecHistory].size()==0)
-    throw std::invalid_argument("Calculator returned an empty spectrum");
-
-  // Preserve the existing summation order, including startup with partial history.
-  pSpec=pSpecHistory[ipSpecHistory];
-  size_t n=1; // The newest spectrum is already included.
-  for(size_t i=0;i<pSpecHistory.size();i++) {
-    if(i==ipSpecHistory || pSpecHistory[i].size()!=pSpec.size()) continue;
-    pSpec+=pSpecHistory[i];
-    ++n;
+void DelayMachine::build_axis_weights(){
+  axisOffsets_.clear();axisIndices_.clear();axisWeights_.clear();
+  const double width=config_.delay_axis_width;
+  for(size_t i=0;i<temporal_.size();++i){
+    axisOffsets_.push_back(axisIndices_.size());double sum=0;
+    for(size_t j=0;j<temporal_.size();++j){
+      double x=(double(temporal_(j))-temporal_(i))/width;
+      double w=config_.delay_axis_method==Config::AxisMethod::Boxcar
+        ? (std::abs(x)<0.5?1:0) : std::exp(-4*x*x);
+      if(w>0){axisIndices_.push_back(j);axisWeights_.push_back(w);sum+=w;}
+    }
+    for(size_t k=axisOffsets_.back();k<axisIndices_.size();++k)axisWeights_[k]/=sum;
   }
-  ipSpecHistory=(ipSpecHistory+1)%pSpecHistory.size();
-  pSpec/=n;
-  // Adding history entries copies their timestamps; report the newest input.
-  pSpec.time(phasors.time());
-
-  analyzeSpectrum(pSpec,snrHistory[iPeakHistory],peakHistory[iPeakHistory]);
-  iPeakHistory=(iPeakHistory+1)%peakHistory.size();
-
-  // Preserve existing smoothing: unused startup entries are zero, and the
-  // divisor is always the configured smoothing length.
-  _delay=0;
-  _snr=0;
-  for(size_t i=0;i<peakHistory.size();i++) {
-    _delay+=peakHistory[i];
-    _snr+=snrHistory[i];
+  axisOffsets_.push_back(axisIndices_.size());
+}
+void DelayMachine::load(const Phasors& ph){
+  calculateSpectrum(ph,raw_);
+  temporal_.add(raw_);pSpec=temporal_;pSpec.time(ph.time());
+  if(config_.delay_axis_method!=Config::AxisMethod::None){
+    if(axisOffsets_.empty())build_axis_weights();
+    for(size_t i=0;i<pSpec.size();++i){
+      double sum=0;
+      for(size_t k=axisOffsets_[i];k<axisOffsets_[i+1];++k)
+        sum+=axisWeights_[k]*temporal_[axisIndices_[k]];
+      pSpec[i]=float(sum);
+    }
   }
-  _delay/=peakHistory.size();
-  _snr/=peakHistory.size();
+  float snr,delay;analyzeSpectrum(pSpec,snr,delay);
+  using M=Config::TemporalMethod;
+  if(config_.output_method==M::None){_delay=delay;_snr=snr;return;}
+  if(config_.output_method==M::Leaky){
+    if(!outputCount_){_delay=delay;_snr=snr;outputCount_=1;}
+    else {_delay=outputDecay_*_delay+(1-outputDecay_)*delay;
+          _snr=outputDecay_*_snr+(1-outputDecay_)*snr;}
+    return;
+  }
+  peakHistory[nextOutput_]=delay;snrHistory[nextOutput_]=snr;
+  nextOutput_=(nextOutput_+1)%peakHistory.size();
+  outputCount_=std::min(outputCount_+1,peakHistory.size());
+  _delay=_snr=0;
+  for(size_t i=0;i<outputCount_;++i){_delay+=peakHistory[i];_snr+=snrHistory[i];}
+  const size_t divisor=legacyOutputStartup_?peakHistory.size():outputCount_;
+  _delay/=divisor;_snr/=divisor;
 }
 
 }
