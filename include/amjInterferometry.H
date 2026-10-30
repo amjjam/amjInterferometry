@@ -71,6 +71,113 @@ namespace amjInterferometry{
     std::vector<std::complex<T> > _p;
   };
 
+  // A temporal integrator IS a Phasors object. The wavelength grid is copied
+  // from the first input and is a caller contract until reset/configure; add()
+  // checks the size but does not scan the wavelength values.
+  template<typename T=float>
+  class PhasorsIntegrate : public Phasors<T>{
+  public:
+    using PhasorsType=Phasors<T>;
+    virtual ~PhasorsIntegrate(){};
+    virtual void add(const Phasors<T>&)=0;
+    virtual void reset()=0;
+  protected:
+    void initialize_from(const Phasors<T>& p){
+      this->resize(p.size());
+      this->name(p.name());
+      for(size_t i=0;i<p.size();i++) (*this)(i)=p(i);
+    }
+    void check_size(const Phasors<T>& p) const{
+      if(this->size()!=p.size())
+        throw std::invalid_argument("PhasorsIntegrate size mismatch; reset before changing grids");
+    }
+    void set_latest_time(const Phasors<T>& p){this->time(p.time());}
+    void clear_output(){
+      this->resize(0);
+      this->name(std::string());
+    }
+  };
+
+  template<typename T=float>
+  class PhasorsIntegrateBoxcar : public PhasorsIntegrate<T>{
+  public:
+    explicit PhasorsIntegrateBoxcar(size_t width=5):width_(width){
+      if(width_==0) throw std::invalid_argument("PhasorsIntegrateBoxcar width must be positive");
+    }
+    void configure(size_t width){
+      if(width==0) throw std::invalid_argument("PhasorsIntegrateBoxcar width must be positive");
+      width_=width;
+      reset();
+    }
+    size_t width() const{return width_;}
+    void reset() override{
+      sum_.clear(); history_.clear(); next_=0; count_=0; initialized_=false;
+      this->clear_output();
+    }
+    void add(const Phasors<T>& p) override{
+      if(!initialized_){
+        this->initialize_from(p);
+        sum_.assign(p.size(),std::complex<T>(0,0));
+        initialized_=true;
+      }else this->check_size(p);
+
+      std::vector<std::complex<T>> sample(p.size());
+      for(size_t i=0;i<p.size();i++) sample[i]=p[i];
+      if(count_<width_){
+        history_.push_back(sample);
+        for(size_t i=0;i<p.size();i++) sum_[i]+=sample[i];
+        ++count_;
+      }else{
+        const auto& oldest=history_[next_];
+        for(size_t i=0;i<p.size();i++) sum_[i]-=oldest[i];
+        history_[next_]=std::move(sample);
+        for(size_t i=0;i<p.size();i++) sum_[i]+=history_[next_][i];
+        next_=(next_+1)%width_;
+      }
+      for(size_t i=0;i<p.size();i++) (*this)[i]=sum_[i];
+      this->set_latest_time(p);
+    }
+  private:
+    size_t width_,next_=0,count_=0;
+    bool initialized_=false;
+    std::vector<std::complex<T>> sum_;
+    std::vector<std::vector<std::complex<T>>> history_;
+  };
+
+  template<typename T=float>
+  class PhasorsIntegrateLeakyBox : public PhasorsIntegrate<T>{
+  public:
+    // width is the 1/e decay time in samples.
+    explicit PhasorsIntegrateLeakyBox(size_t width=5){configure(width);}
+    void configure(size_t width){
+      if(width==0) throw std::invalid_argument("PhasorsIntegrateLeakyBox width must be positive");
+      width_=width;
+      decay_=static_cast<T>(std::exp(-1.0/static_cast<double>(width_)));
+      reset();
+    }
+    size_t width() const{return width_;}
+    void reset() override{
+      initialized_=false;
+      this->clear_output();
+    }
+    void add(const Phasors<T>& p) override{
+      if(!initialized_){
+        this->initialize_from(p);
+        for(size_t i=0;i<p.size();i++) (*this)[i]=p[i];
+        initialized_=true;
+      }else{
+        this->check_size(p);
+        for(size_t i=0;i<p.size();i++)
+          (*this)[i]=decay_*(*this)[i]+p[i];
+      }
+      this->set_latest_time(p);
+    }
+  private:
+    size_t width_=5;
+    T decay_=static_cast<T>(std::exp(-1.0/5.0));
+    bool initialized_=false;
+  };
+
   template<typename T=float>
   class PowerSpectrum{
   public:
