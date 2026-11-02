@@ -18,6 +18,11 @@
 #include <amjTime.H>
 
 namespace amjInterferometry{
+
+  //
+  // Wavelengths
+  //
+  
   template<typename T=float>
   class Wavelengths{
   public:
@@ -40,6 +45,11 @@ namespace amjInterferometry{
     std::vector<T> _L;
   };
 
+
+  //
+  // Phasors
+  //
+  
   template<typename T=float>
   class Phasors{
   public:
@@ -64,120 +74,169 @@ namespace amjInterferometry{
     size_t memsize2() const {return _name.length()+_time.size()
 	+_p.size()*3*sizeof(T);};
     int read2(uint8_t *);
-  private:
+  protected:
     std::string _name;
     amjTime _time;
     std::vector<T> _w;
     std::vector<std::complex<T> > _p;
   };
-
-  // A temporal integrator IS a Phasors object. The wavelength grid is copied
-  // from the first input and is a caller contract until reset/configure; add()
-  // checks the size but does not scan the wavelength values.
+  
   template<typename T=float>
-  class PhasorsIntegrate : public Phasors<T>{
+  class PhasorsAverage: public Phasors<T>{
+    using Phasors<T>::_w;
+    using Phasors<T>::_p;
   public:
-    using PhasorsType=Phasors<T>;
-    virtual ~PhasorsIntegrate(){};
-    virtual void add(const Phasors<T>&)=0;
-    virtual void reset()=0;
+    PhasorsAverage():old_N(0){};
+    virtual ~PhasorsAverage(){};
+    virtual bool add(const Phasors<T> &p);
+    virtual double Tavg()=0;
+    virtual void Tavg(double)=0;
+    bool old(size_t &N, T &w0, T &w1) {N=old_N;
+      w0=old_w0; w1=old_w1; return old_N>0;}
   protected:
-    void initialize_from(const Phasors<T>& p){
-      this->resize(p.size());
-      this->name(p.name());
-      for(size_t i=0;i<p.size();i++) (*this)(i)=p(i);
-    }
-    void check_size(const Phasors<T>& p) const{
-      if(this->size()!=p.size())
-        throw std::invalid_argument("PhasorsIntegrate size mismatch; reset before changing grids");
-    }
-    void set_latest_time(const Phasors<T>& p){this->time(p.time());}
-    void clear_output(){
-      this->resize(0);
-      this->name(std::string());
-    }
-  };
-
-  template<typename T=float>
-  class PhasorsIntegrateBoxcar : public PhasorsIntegrate<T>{
-  public:
-    explicit PhasorsIntegrateBoxcar(size_t width=5):width_(width){
-      if(width_==0) throw std::invalid_argument("PhasorsIntegrateBoxcar width must be positive");
-    }
-    void configure(size_t width){
-      if(width==0) throw std::invalid_argument("PhasorsIntegrateBoxcar width must be positive");
-      width_=width;
-      reset();
-    }
-    size_t width() const{return width_;}
-    void reset() override{
-      sum_.clear(); history_.clear(); next_=0; count_=0; initialized_=false;
-      this->clear_output();
-    }
-    void add(const Phasors<T>& p) override{
-      if(!initialized_){
-        this->initialize_from(p);
-        sum_.assign(p.size(),std::complex<T>(0,0));
-        initialized_=true;
-      }else this->check_size(p);
-
-      std::vector<std::complex<T>> sample(p.size());
-      for(size_t i=0;i<p.size();i++) sample[i]=p[i];
-      if(count_<width_){
-        history_.push_back(sample);
-        for(size_t i=0;i<p.size();i++) sum_[i]+=sample[i];
-        ++count_;
-      }else{
-        const auto& oldest=history_[next_];
-        for(size_t i=0;i<p.size();i++) sum_[i]-=oldest[i];
-        history_[next_]=std::move(sample);
-        for(size_t i=0;i<p.size();i++) sum_[i]+=history_[next_][i];
-        next_=(next_+1)%width_;
-      }
-      for(size_t i=0;i<p.size();i++) (*this)[i]=sum_[i];
-      this->set_latest_time(p);
-    }
+    void set_old(){if(_w.size()==0) return;
+      old_N=_w.size(); old_w0=_w[0]; old_w1=_w[_w.size()-1];}
   private:
-    size_t width_,next_=0,count_=0;
-    bool initialized_=false;
-    std::vector<std::complex<T>> sum_;
-    std::vector<std::vector<std::complex<T>>> history_;
+    size_t old_N;
+    T old_w0,old_w1;
   };
-
+  
   template<typename T=float>
-  class PhasorsIntegrateLeakyBox : public PhasorsIntegrate<T>{
+  class PhasorsBoxcar: public PhasorsAverage<T>{
+    using PhasorsAverage<T>::_time;
+    using PhasorsAverage<T>::_name;
+    using PhasorsAverage<T>::_w;
+    using PhasorsAverage<T>::_p;
+    using PhasorsAverage<T>::set_old;
   public:
-    // width is the 1/e decay time in samples.
-    explicit PhasorsIntegrateLeakyBox(size_t width=5){configure(width);}
-    void configure(size_t width){
-      if(width==0) throw std::invalid_argument("PhasorsIntegrateLeakyBox width must be positive");
-      width_=width;
-      decay_=static_cast<T>(std::exp(-1.0/static_cast<double>(width_)));
-      reset();
-    }
-    size_t width() const{return width_;}
-    void reset() override{
-      initialized_=false;
-      this->clear_output();
-    }
-    void add(const Phasors<T>& p) override{
-      if(!initialized_){
-        this->initialize_from(p);
-        for(size_t i=0;i<p.size();i++) (*this)[i]=p[i];
-        initialized_=true;
-      }else{
-        this->check_size(p);
-        for(size_t i=0;i<p.size();i++)
-          (*this)[i]=decay_*(*this)[i]+p[i];
-      }
-      this->set_latest_time(p);
-    }
+    PhasorsBoxcar(double w=1):n(1),index(0){Tavg(w);}
+    virtual ~PhasorsBoxcar(){};
+    virtual double Tavg() override {return w;}
+    virtual void Tavg(double) override;
+    virtual bool add(const Phasors<T> &p) override;
   private:
-    size_t width_=5;
-    T decay_=static_cast<T>(std::exp(-1.0/5.0));
-    bool initialized_=false;
+    double w;
+    size_t n;
+    std::vector<std::vector<std::complex<T>>> _h;
+    size_t index;
+    bool update(const Phasors<T> &p);
+    void update_average();
+  };
+  
+  template<typename T>
+  void PhasorsBoxcar<T>::Tavg(double t){
+    w=t;
+    if(w<1)
+      w=1;
+    size_t new_n=std::round(w);
+    if(new_n==n)
+      return;
+    if (_h.size()==n) // history is full; index points to the oldest sample
+      std::rotate(_h.begin(),_h.begin()+index,_h.end());
+    index=0;
+    if (_h.size()>new_n)
+      _h.erase(_h.begin(),_h.end()-new_n); // discard oldest, keep newest
+    n=new_n;
+    update_average();
+  }
+  
+  template<typename T>
+  bool PhasorsBoxcar<T>::add(const Phasors<T> &p){
+    bool r=update(p);
+    if(_h.size()<n){
+      _h.emplace_back(_w.size());
+      index=_h.size()-1;
+    }
+    for(size_t i=0;i<_w.size();i++)
+      _h[index][i]=p[i];
+    index=(index+1)%_h.size();
+    update_average();
+    _time=p.time();
+    return r;
   };
 
+  template<typename T>
+  void PhasorsBoxcar<T>::update_average(){
+    if(_h.size()==0)
+      return;
+    for(size_t i=0;i<_p.size();i++){
+      _p[i]=0;
+      for(size_t j=0;j<_h.size();j++)
+	_p[i]+=_h[j][i];
+      _p[i]/=_h.size();
+    }
+  }
+
+  template<typename T>
+  bool PhasorsBoxcar<T>::update(const Phasors<T> &p){
+    if (_w.size()>0&&p.size()==_w.size()&&p(0)==_w[0]&&
+	p(p.size()-1)==_w[p.size()-1]&&_name==p.name())
+      return false;
+    
+    set_old();
+    
+    _w.resize(p.size());
+    _p.resize(p.size());
+    _h.clear();
+    
+    for (size_t i=0; i<p.size(); i++)
+      _w[i] = p(i);
+    
+    _name = p.name();
+    return true;
+  }
+  
+  
+  template<typename T>
+  class PhasorsLeakyBox:public PhasorsAverage<T>{
+    using PhasorsAverage<T>::_time;
+    using PhasorsAverage<T>::_name;
+    using PhasorsAverage<T>::_w;
+    using PhasorsAverage<T>::_p;
+    using PhasorsAverage<T>::set_old;
+  public:
+    PhasorsLeakyBox(double w){Tavg(w);}
+    virtual bool add(const Phasors<T> &p) override;
+    virtual double Tavg() override {return w;}
+    virtual void Tavg(double t) override {w=t; if(w<1) w=1;}
+  private:
+    double w;
+    bool update(const Phasors<T> &p);
+  };
+  
+  template<typename T>
+  bool PhasorsLeakyBox<T>::add(const Phasors<T> &p){
+    bool r=update(p);
+    double alpha=1.0/w;
+    if(r)
+      alpha=1;
+    for(size_t i=0;i<_w.size();i++)
+      _p[i]=p[i]*alpha+_p[i]*(1-alpha);
+    _time=p.time();
+    return r;
+  }
+  
+  template<typename T>
+  bool PhasorsLeakyBox<T>::update(const Phasors<T> &p){
+    if (_w.size()>0&&p.size()==_w.size()&&p(0)==_w[0]&&
+	p(p.size()-1)==_w[p.size()-1]&&_name==p.name())
+      return false;
+
+    set_old();
+    
+    _w.resize(p.size());
+    _p.resize(p.size());
+    
+    for(size_t i=0;i<p.size();i++)
+      _w[i]=p(i);
+    
+    return true;
+  }
+  
+  //
+  // PowerSpectrum
+  //
+  
   template<typename T=float>
   class PowerSpectrum{
   public:
@@ -289,9 +348,10 @@ namespace amjInterferometry{
   int findMax(std::vector<T> &p);
   
   
-  
+  //
   // Wavelengths
-
+  //
+  
   template<typename T=float>
   Wavelengths<T> makeWavelengths(int nL, T L0, T L1,
                                  const std::string &name=""){
@@ -484,9 +544,10 @@ namespace amjInterferometry{
   }
 
 
-
+  //
   // CalcPowerSpectrum
-
+  //
+  
   template<typename T>
   CalcPowerSpectrum<T>::~CalcPowerSpectrum() {}
 
@@ -753,7 +814,7 @@ public:
     int imax=-1;
     T peak=-1e31;
     
-    for(int i=0;i<p.size();i++)
+    for(size_t i=0;i<p.size();i++)
       if(p[i]>peak){
 	imax=i;
 	peak=p[i];
@@ -763,7 +824,7 @@ public:
     
     int count=0;
     T v=0,v2=0;
-    for(int i=0;i<p.size();i++)
+    for(size_t i=0;i<p.size();i++)
       if(p(i)<delay-peak_width/2||p(i)>delay+peak_width/2){
 	count++;
 	v+=p[i];
