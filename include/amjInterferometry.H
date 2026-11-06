@@ -14,6 +14,7 @@
 #include <string>
 #include <utility>
 #include <functional>
+#include <memory>
 
 #include <amjTime.H>
 
@@ -33,7 +34,7 @@ namespace amjInterferometry{
       for(int i=0;i<L.size();i++)
 	_L[i]=L[i];
     }
-    virtual ~Wavelengths(){};
+    ~Wavelengths(){};
     size_t size() const {return _L.size();};
     void resize(size_t n) {_L.resize(n);};
     void name(std::string &name){_name=name;};
@@ -45,6 +46,21 @@ namespace amjInterferometry{
     std::vector<T> _L;
   };
 
+  template<typename T=float>
+  Wavelengths<T> makeWavelengths(int nL, T L0, T L1,
+                                 const std::string &name=""){
+    if(nL < 2 || !std::isfinite(L0) || !std::isfinite(L1) ||
+       L0 <= 0 || L1 <= 0)
+      throw std::invalid_argument("Need at least two positive finite wavelengths");
+    Wavelengths<T> w;
+    std::string label=name;
+    w.name(label);
+    w.resize(static_cast<size_t>(nL));
+    const long double b0=1.0L/L0, b1=1.0L/L1;
+    for(int i=0;i<nL;i++)
+      w[i]=static_cast<T>(1.0L/(b0+(b1-b0)*i/(nL-1)));
+    return w;
+  }
 
   //
   // Phasors
@@ -80,295 +96,6 @@ namespace amjInterferometry{
     std::vector<T> _w;
     std::vector<std::complex<T> > _p;
   };
-  
-  template<typename T=float>
-  class PhasorsAverage: public Phasors<T>{
-    using Phasors<T>::_w;
-    using Phasors<T>::_p;
-  public:
-    PhasorsAverage():old_N(0){};
-    virtual ~PhasorsAverage(){};
-    virtual bool add(const Phasors<T> &p);
-    virtual double Tavg()=0;
-    virtual void Tavg(double)=0;
-    bool old(size_t &N, T &w0, T &w1) {N=old_N;
-      w0=old_w0; w1=old_w1; return old_N>0;}
-  protected:
-    void set_old(){if(_w.size()==0) return;
-      old_N=_w.size(); old_w0=_w[0]; old_w1=_w[_w.size()-1];}
-  private:
-    size_t old_N;
-    T old_w0,old_w1;
-  };
-  
-  template<typename T=float>
-  class PhasorsBoxcar: public PhasorsAverage<T>{
-    using PhasorsAverage<T>::_time;
-    using PhasorsAverage<T>::_name;
-    using PhasorsAverage<T>::_w;
-    using PhasorsAverage<T>::_p;
-    using PhasorsAverage<T>::set_old;
-  public:
-    PhasorsBoxcar(double w=1):n(1),index(0){Tavg(w);}
-    virtual ~PhasorsBoxcar(){};
-    virtual double Tavg() override {return w;}
-    virtual void Tavg(double) override;
-    virtual bool add(const Phasors<T> &p) override;
-  private:
-    double w;
-    size_t n;
-    std::vector<std::vector<std::complex<T>>> _h;
-    size_t index;
-    bool update(const Phasors<T> &p);
-    void update_average();
-  };
-  
-  template<typename T>
-  void PhasorsBoxcar<T>::Tavg(double t){
-    w=t;
-    if(w<1)
-      w=1;
-    size_t new_n=std::round(w);
-    if(new_n==n)
-      return;
-    if (_h.size()==n) // history is full; index points to the oldest sample
-      std::rotate(_h.begin(),_h.begin()+index,_h.end());
-    index=0;
-    if (_h.size()>new_n)
-      _h.erase(_h.begin(),_h.end()-new_n); // discard oldest, keep newest
-    n=new_n;
-    update_average();
-  }
-  
-  template<typename T>
-  bool PhasorsBoxcar<T>::add(const Phasors<T> &p){
-    bool r=update(p);
-    if(_h.size()<n){
-      _h.emplace_back(_w.size());
-      index=_h.size()-1;
-    }
-    for(size_t i=0;i<_w.size();i++)
-      _h[index][i]=p[i];
-    index=(index+1)%_h.size();
-    update_average();
-    _time=p.time();
-    return r;
-  };
-
-  template<typename T>
-  void PhasorsBoxcar<T>::update_average(){
-    if(_h.size()==0)
-      return;
-    for(size_t i=0;i<_p.size();i++){
-      _p[i]=0;
-      for(size_t j=0;j<_h.size();j++)
-	_p[i]+=_h[j][i];
-      _p[i]/=_h.size();
-    }
-  }
-
-  template<typename T>
-  bool PhasorsBoxcar<T>::update(const Phasors<T> &p){
-    if (_w.size()>0&&p.size()==_w.size()&&p(0)==_w[0]&&
-	p(p.size()-1)==_w[p.size()-1]&&_name==p.name())
-      return false;
-    
-    set_old();
-    
-    _w.resize(p.size());
-    _p.resize(p.size());
-    _h.clear();
-    
-    for (size_t i=0; i<p.size(); i++)
-      _w[i] = p(i);
-    
-    _name = p.name();
-    return true;
-  }
-  
-  
-  template<typename T>
-  class PhasorsLeakyBox:public PhasorsAverage<T>{
-    using PhasorsAverage<T>::_time;
-    using PhasorsAverage<T>::_name;
-    using PhasorsAverage<T>::_w;
-    using PhasorsAverage<T>::_p;
-    using PhasorsAverage<T>::set_old;
-  public:
-    PhasorsLeakyBox(double w){Tavg(w);}
-    virtual bool add(const Phasors<T> &p) override;
-    virtual double Tavg() override {return w;}
-    virtual void Tavg(double t) override {w=t; if(w<1) w=1;}
-  private:
-    double w;
-    bool update(const Phasors<T> &p);
-  };
-  
-  template<typename T>
-  bool PhasorsLeakyBox<T>::add(const Phasors<T> &p){
-    bool r=update(p);
-    double alpha=1.0/w;
-    if(r)
-      alpha=1;
-    for(size_t i=0;i<_w.size();i++)
-      _p[i]=p[i]*alpha+_p[i]*(1-alpha);
-    _time=p.time();
-    return r;
-  }
-  
-  template<typename T>
-  bool PhasorsLeakyBox<T>::update(const Phasors<T> &p){
-    if (_w.size()>0&&p.size()==_w.size()&&p(0)==_w[0]&&
-	p(p.size()-1)==_w[p.size()-1]&&_name==p.name())
-      return false;
-
-    set_old();
-    
-    _w.resize(p.size());
-    _p.resize(p.size());
-    
-    for(size_t i=0;i<p.size();i++)
-      _w[i]=p(i);
-    
-    return true;
-  }
-  
-  //
-  // PowerSpectrum
-  //
-  
-  template<typename T=float>
-  class PowerSpectrum{
-  public:
-    PowerSpectrum(){}
-    virtual ~PowerSpectrum(){}
-    void name(std::string n){_name=n;}
-    const std::string &name() const {return _name;}
-    void time(const amjTime &t){_time=t;};
-    const amjTime &time() const {return _time;};
-    void clear(){_name.clear(); _delay.resize(0); _power.resize(0);}
-    T &operator[](int i){return _power[i];}
-    const T &operator[](int i) const {return _power[i];}
-    T &operator()(int i){return _delay[i];}
-    const T &operator()(int i) const {return _delay[i];}
-    const std::vector<T> &delay(){return _delay;}
-    const std::vector<T> &power(){return _power;}
-    size_t size() const {return _delay.size();}
-    void resize(size_t s){_delay.resize(s); _power.resize(s);}
-    size_t memsize() const {return memsize1()+memsize2();}
-    int write(uint8_t *) const;
-    size_t memsize1() const {return 2*sizeof(uint32_t);}
-    int read1(uint8_t *);
-    size_t memsize2() const {return _name.size()+_time.size()
-	+sizeof(T)*2*_delay.size();}
-    int read2(uint8_t *);
-    // Explicit configuration-time check; operator+= assumes matching grids.
-    template<typename U>
-    bool same_delay_grid(const PowerSpectrum<U> &ps) const;
-    // Empty destinations adopt the first spectrum, including name/time.
-    // Later additions preserve destination coordinates/name and copy incoming time.
-    template<typename U=float>
-    void operator+=(const PowerSpectrum<U> &ps);
-    template<typename U=float>
-    void operator/=(U);
-  protected:
-    std::string _name;
-    amjTime _time;
-    std::vector<T> _delay,_power;
-  };
-
-  template<typename T=float>
-  class CalcPowerSpectrum{
-  public:
-    CalcPowerSpectrum(){};
-    virtual ~CalcPowerSpectrum()=0;
-    template<typename U, typename V>
-    void operator()(const Phasors<U> &, PowerSpectrum<V> &);
-    template<typename U, typename V>
-    void operator()(const std::vector<Phasors<U> > &,
-		    std::vector<PowerSpectrum<V> > &);
-  private:
-
-  };
-
-  template<typename T=float>
-  class CalcPowerSpectrumFFT: public CalcPowerSpectrum<T>{
-  public:
-    CalcPowerSpectrumFFT():wfirst(0),wlast(0),nOver(1),
-      validateWavelengths(false),validatedSize(0){};
-    ~CalcPowerSpectrumFFT(){};
-    void set_nover(int n){
-      if(n < 1) throw std::invalid_argument("FFT oversampling must be positive");
-      nOver=n;
-    };
-    // Assume a stable channel grid. When enabled, validate once, then cache.
-    // Calling this setter again (even with true) forces a fresh check.
-    void set_validate_wavelengths(bool enabled){
-      validateWavelengths=enabled;
-      validatedSize=0;
-    }
-    void set_wavelength(T, T);
-    template<typename U>
-    void set_wavelength(const std::vector<std::pair<U,U> > &w);
-    template<typename U, typename V>
-    void operator()(const Phasors<U> &, PowerSpectrum<V> &);
-    template<typename U, typename V>
-    void operator()(const std::vector<Phasors<U> > &,
-			    std::vector<PowerSpectrum<V> > &);
-  private:
-    T wfirst,wlast;
-    std::vector<std::pair<T,T> > wavelengths;
-    int nOver;
-    std::vector<T> fftData;
-    bool validateWavelengths;
-    size_t validatedSize;
-  };
-
-  template<typename T=float>
-  class CalcPowerSpectrumDFT: public CalcPowerSpectrum<T>{
-  public:
-    CalcPowerSpectrumDFT(){};
-    ~CalcPowerSpectrumDFT(){};
-    template<typename U>
-    void set_delay(const std::vector<U> &);
-    //template<typename U>
-    //void set_delay(const std::vector<std::vector<U> > &);
-    template<typename U, typename V>
-    void operator()(const Phasors<U> &, PowerSpectrum<V> &);
-    template<typename U, typename V>
-    void operator()(const std::vector<Phasors<U> > &,
-			    std::vector<PowerSpectrum<V> > &);
-  private:
-    std::vector<T> delay;
-  };
-    
-
-
-  template<typename T>
-  int findMax(std::vector<T> &p);
-  
-  
-  //
-  // Wavelengths
-  //
-  
-  template<typename T=float>
-  Wavelengths<T> makeWavelengths(int nL, T L0, T L1,
-                                 const std::string &name=""){
-    if(nL < 2 || !std::isfinite(L0) || !std::isfinite(L1) ||
-       L0 <= 0 || L1 <= 0)
-      throw std::invalid_argument("Need at least two positive finite wavelengths");
-    Wavelengths<T> w;
-    std::string label=name;
-    w.name(label);
-    w.resize(static_cast<size_t>(nL));
-    const long double b0=1.0L/L0, b1=1.0L/L1;
-    for(int i=0;i<nL;i++)
-      w[i]=static_cast<T>(1.0L/(b0+(b1-b0)*i/(nL-1)));
-    return w;
-  }
-
-  // Phasors
 
   template<typename T>
   template<typename U>
@@ -418,13 +145,164 @@ namespace amjInterferometry{
     return p-pos;
   }
 
+  
+  template<typename T=float>
+  class PhasorsAverage: public Phasors<T>{
+    using Phasors<T>::_w;
+    using Phasors<T>::_p;
+  public:
+    PhasorsAverage(){};
+    virtual ~PhasorsAverage(){};
+    virtual bool add(const Phasors<T> &p);
+    virtual double Tavg()=0;
+    virtual void Tavg(double)=0;
+  };
+  
+  template<typename T=float>
+  class PhasorsBoxcar: public PhasorsAverage<T>{
+    using PhasorsAverage<T>::_time;
+    using PhasorsAverage<T>::_name;
+    using PhasorsAverage<T>::_w;
+    using PhasorsAverage<T>::_p;
+  public:
+    PhasorsBoxcar(const Phasors<T> &p, double tavg=1);
+    virtual ~PhasorsBoxcar(){};
+    virtual double Tavg() override {return w;}
+    virtual void Tavg(double) override;
+    virtual bool add(const Phasors<T> &p) override;
+  private:
+    double w;
+    size_t n;
+    std::vector<std::vector<std::complex<T>>> _h;
+    size_t index;
+    bool update(const Phasors<T> &p);
+    void update_average();
+  };
+
+  template<typename T>
+  PhasorsBoxcar<T>::PhasorsBoxcar(const Phasors<T> &p, double tavg):n(1),index(0){
+    _name=p.name();
+    _time=p.time();
+    _w.resize(p.size());
+    for(size_t i=0;i<_w.size();i++)
+      _w[i]=p(i);
+    _p.resize(p.size());
+    Tavg(tavg);
+  }
+  
+  template<typename T>
+  void PhasorsBoxcar<T>::Tavg(double t){
+    w=t;
+    if(w<1)
+      w=1;
+    size_t new_n=std::round(w);
+    if(new_n==n)
+      return;
+    if (_h.size()==n) // history is full; index points to the oldest sample
+      std::rotate(_h.begin(),_h.begin()+index,_h.end());
+    index=0;
+    if (_h.size()>new_n)
+      _h.erase(_h.begin(),_h.end()-new_n); // discard oldest, keep newest
+    n=new_n;
+    update_average();
+  }
+  
+  template<typename T>
+  bool PhasorsBoxcar<T>::add(const Phasors<T> &p){
+    if(_h.size()<n){
+      _h.emplace_back(_w.size());
+      index=_h.size()-1;
+    }
+    for(size_t i=0;i<_w.size();i++)
+      _h[index][i]=p[i];
+    index=(index+1)%_h.size();
+    update_average();
+    _time=p.time();
+    return true;
+  };
+
+  template<typename T>
+  void PhasorsBoxcar<T>::update_average(){
+    if(_h.size()==0)
+      return;
+    for(size_t i=0;i<_p.size();i++){
+      _p[i]=0;
+      for(size_t j=0;j<_h.size();j++)
+	_p[i]+=_h[j][i];
+      _p[i]/=_h.size();
+    }
+  }
+
+  template<typename T>
+  class PhasorsLeakyBox:public PhasorsAverage<T>{
+    using PhasorsAverage<T>::_time;
+    using PhasorsAverage<T>::_name;
+    using PhasorsAverage<T>::_w;
+    using PhasorsAverage<T>::_p;
+  public:
+    PhasorsLeakyBox(double w){Tavg(w);}
+    virtual ~PhasorsLeakyBox(){};
+    virtual bool add(const Phasors<T> &p) override;
+    virtual double Tavg() override {return w;}
+    virtual void Tavg(double t) override {w=t; if(w<1) w=1;}
+  private:
+    double w;
+    bool update(const Phasors<T> &p);
+  };
+  
+  template<typename T>
+  bool PhasorsLeakyBox<T>::add(const Phasors<T> &p){
+    double alpha=1.0/w;
+    alpha=alpha<1?1:alpha;
+    for(size_t i=0;i<_w.size();i++)
+      _p[i]=p[i]*alpha+_p[i]*(1-alpha);
+    _time=p.time();
+    return true;
+  }
+  
+  //
   // PowerSpectrum
-
-  // Legacy one-based interleaved FFT API: data[0] is unused.
-  // Allocate 2*nn+1 elements; nn is a positive power of two.
-  void four1(float data[], unsigned long nn, int isign);
-  void four1(double data[], unsigned long nn, int isign);
-
+  //
+  
+  template<typename T=float>
+  class PowerSpectrum{
+  public:
+    PowerSpectrum(){}
+    virtual ~PowerSpectrum(){}
+    void name(std::string n){_name=n;}
+    const std::string &name() const {return _name;}
+    void time(const amjTime &t){_time=t;};
+    const amjTime &time() const {return _time;};
+    void clear(){_name.clear(); _delay.resize(0); _power.resize(0);}
+    T &operator[](int i){return _power[i];}
+    const T &operator[](int i) const {return _power[i];}
+    T &operator()(int i){return _delay[i];}
+    const T &operator()(int i) const {return _delay[i];}
+    const std::vector<T> &delay(){return _delay;}
+    const std::vector<T> &power(){return _power;}
+    size_t size() const {return _delay.size();}
+    void resize(size_t s){_delay.resize(s); _power.resize(s);}
+    size_t memsize() const {return memsize1()+memsize2();}
+    int write(uint8_t *) const;
+    size_t memsize1() const {return 2*sizeof(uint32_t);}
+    int read1(uint8_t *);
+    size_t memsize2() const {return _name.size()+_time.size()
+	+sizeof(T)*2*_delay.size();}
+    int read2(uint8_t *);
+    // Explicit configuration-time check; operator+= assumes matching grids.
+    template<typename U>
+    bool same_delay_grid(const PowerSpectrum<U> &ps) const;
+    // Empty destinations adopt the first spectrum, including name/time.
+    // Later additions preserve destination coordinates/name and copy incoming time.
+    template<typename U=float>
+    void operator+=(const PowerSpectrum<U> &ps);
+    template<typename U=float>
+    void operator/=(U);
+  protected:
+    std::string _name;
+    amjTime _time;
+    std::vector<T> _delay,_power;
+  };
 
   template<typename T>
   int PowerSpectrum<T>::write(uint8_t *pp) const{
@@ -500,59 +378,198 @@ namespace amjInterferometry{
       _power[i]/=f;
   }
 
-  // Gaussian
-  // 1/\sqrt{2pi}/sigma*exp(-(x-mu)^2/2\sigma^2)
-  inline double gaussian(double x, double m, double s){
-    return 1.0/sqrt(2*M_PI)/s*exp(-(x-m)*(x-m)/2.0/s/s);
+
+  //
+  // PowerSpectrumAverage
+  //
+  
+  template<typename T=float>
+  class PowerSpectrumAverage: public PowerSpectrum<T>{
+  protected:
+    using PowerSpectrum<T>::_name;
+    using PowerSpectrum<T>::_time;
+    using PowerSpectrum<T>::_delay;
+    using PowerSpectrum<T>::_power;
+  public:
+    PowerSpectrumAverage():old_N(0),old_d0(0),old_d1(0){}
+    virtual ~PowerSpectrumAverage(){}
+    virtual bool add(const PowerSpectrum<T>&)=0;
+    virtual double Tavg()=0;
+    virtual void Tavg(double)=0;
+    virtual void reset(){PowerSpectrum<T>::clear();_time=amjTime();old_N=0;}
+    bool old(size_t& N,T& d0,T& d1) const {N=old_N;d0=old_d0;d1=old_d1;return old_N>0;}
+  protected:
+    bool update(const PowerSpectrum<T>& p){
+      if(!p.size())throw std::invalid_argument("Empty averaging input");
+      if(_delay.size()>0&&p.size()==_delay.size()&&p(0)==_delay[0]&&
+         p(p.size()-1)==_delay.back()&&_name==p.name())return false;
+      set_old();
+      _delay.resize(p.size());_power.assign(p.size(),T(0));
+      for(size_t i=0;i<p.size();++i)_delay[i]=p(i);
+      _name=p.name();
+      return true;
+    }
+    void set_old(){
+      if(!_delay.size())return;
+      old_N=_delay.size();old_d0=_delay[0];old_d1=_delay.back();
+    }
+  private:
+    size_t old_N;
+    T old_d0,old_d1;
+  };
+
+  //
+  // PowerSpectrumBoxcar
+  //
+  
+  template<typename T=float>
+  class PowerSpectrumBoxcar: public PowerSpectrumAverage<T>{
+    using PowerSpectrumAverage<T>::_time;
+    using PowerSpectrumAverage<T>::_power;
+    using PowerSpectrumAverage<T>::update;
+  public:
+    PowerSpectrumBoxcar(double w=1):n(1),index(0){Tavg(w);}
+    virtual ~PowerSpectrumBoxcar(){};
+    double Tavg() override {return w;}
+    void Tavg(double);
+    bool add(const PowerSpectrum<T>&) override;
+    void reset() override {PowerSpectrumAverage<T>::reset();_h.clear();index=0;}
+  private:
+    double w;
+    size_t n,index;
+    std::vector<std::vector<T>> _h;
+    void update_average();
+  };
+
+  template<typename T>
+  void PowerSpectrumBoxcar<T>::Tavg(double t){
+    if(!std::isfinite(t))throw std::invalid_argument("Boxcar width must be finite");
+    w=std::max(1.0,t);
+    size_t new_n=std::round(w);
+    if(new_n==n)return;
+    if(_h.size()==n)std::rotate(_h.begin(),_h.begin()+index,_h.end());
+    index=0;
+    if(_h.size()>new_n)_h.erase(_h.begin(),_h.end()-new_n);
+    n=new_n;update_average();
+  }
+
+  template<typename T>
+  bool PowerSpectrumBoxcar<T>::add(const PowerSpectrum<T>& p){
+    bool changed=update(p);
+    if(changed){_h.clear();index=0;}
+    if(_h.size()<n){_h.emplace_back(p.size());index=_h.size()-1;}
+    for(size_t i=0;i<p.size();++i)_h[index][i]=p[i];
+    index=(index+1)%_h.size();
+    update_average();_time=p.time();
+    return changed;
+  }
+
+  template<typename T>
+  void PowerSpectrumBoxcar<T>::update_average(){
+    if(!_h.size())return;
+    for(size_t i=0;i<_power.size();++i){
+      _power[i]=0;
+      for(size_t j=0;j<_h.size();++j)_power[i]+=_h[j][i];
+      _power[i]/=_h.size();
+    }
+  }
+
+  //
+  // PowerSpectrumLeakyBox
+  //
+  
+  template<typename T=float>
+  class PowerSpectrumLeakyBox: public PowerSpectrumAverage<T>{
+    using PowerSpectrumAverage<T>::_time;
+    using PowerSpectrumAverage<T>::_power;
+    using PowerSpectrumAverage<T>::update;
+  public:
+    PowerSpectrumLeakyBox(double w=1){Tavg(w);}
+    virtual ~PowerSpectrumLeakyBox(){};
+    double Tavg() override {return w;}
+    void Tavg(double);
+    bool add(const PowerSpectrum<T>&) override;
+  private:
+    double w;
+  };
+
+  template<typename T>
+  void PowerSpectrumLeakyBox<T>::Tavg(double t){
+    if(!std::isfinite(t))throw std::invalid_argument("Leaky-box width must be finite");
+    w=std::max(1.0,t);
+  }
+
+  template<typename T>
+  bool PowerSpectrumLeakyBox<T>::add(const PowerSpectrum<T>& p){
+    bool changed=update(p);
+    double alpha=1.0/w;
+    if(changed)alpha=1;
+    for(size_t i=0;i<_power.size();++i)
+      _power[i]=alpha*p[i]+(1-alpha)*_power[i];
+    _time=p.time();
+    return changed;
   }
   
-  // SmoothPowerSpectrum
-  template<typename T, typename U>
-  PowerSpectrum<T> gsmooth(const PowerSpectrum<T> &p, U sigma){
-    if(!std::isfinite(sigma) || sigma <= 0)
-      throw std::invalid_argument("Gaussian width must be positive and finite");
-    PowerSpectrum<T> result=p;
-    for(size_t i=0;i<p.size();i++){
-      long double weighted=0, weights=0;
-      for(size_t j=0;j<p.size();j++){
-        const long double x=(static_cast<long double>(p(j))-p(i))/sigma;
-        const long double weight=std::exp(-x*x/2);
-        weighted+=weight*p[j];
-        weights+=weight;
-      }
-      result[i]=static_cast<T>(weighted/weights);
-    }
-    return result;
-  }
-
-  template<typename T, typename U>
-  PowerSpectrum<T> bsmooth(const PowerSpectrum<T> &p, U w){
-    PowerSpectrum<T> _p=p;
-    double g,s;
-    for(size_t i=0;i<p.size();i++){
-      g=0;
-      s=0;
-      for(size_t j=0;j<p.size();j++){
-	if(fabs(p(j)-p(i))<w/2){
-	  g++;
-	  s+=p[j];
-	}
-      }
-      _p[i]=s/g;
-    }
-    return _p;
-  }
-
-
   //
   // CalcPowerSpectrum
   //
   
+  template<typename T=float>
+  class CalcPowerSpectrum{
+  public:
+    CalcPowerSpectrum(){};
+    ~CalcPowerSpectrum()=0;
+    template<typename U, typename V>
+    void operator()(const Phasors<U> &, PowerSpectrum<V> &);
+    template<typename U, typename V>
+    void operator()(const std::vector<Phasors<U> > &,
+		    std::vector<PowerSpectrum<V> > &);
+  private:
+
+  };
+
   template<typename T>
   CalcPowerSpectrum<T>::~CalcPowerSpectrum() {}
-
   
+  //
   // CalcPowerSpectrumFFT
+  //
+  
+  void four1(float data[], unsigned long nn, int isign);
+  void four1(double data[], unsigned long nn, int isign);
+
+  template<typename T=float>
+  class CalcPowerSpectrumFFT: public CalcPowerSpectrum<T>{
+  public:
+    CalcPowerSpectrumFFT():wfirst(0),wlast(0),nOver(1),
+      validateWavelengths(false),validatedSize(0){};
+    virtual ~CalcPowerSpectrumFFT(){};
+    void set_nover(int n){
+      if(n < 1) throw std::invalid_argument("FFT oversampling must be positive");
+      nOver=n;
+    };
+    // Assume a stable channel grid. When enabled, validate once, then cache.
+    // Calling this setter again (even with true) forces a fresh check.
+    void set_validate_wavelengths(bool enabled){
+      validateWavelengths=enabled;
+      validatedSize=0;
+    }
+    void set_wavelength(T, T);
+    template<typename U>
+    void set_wavelength(const std::vector<std::pair<U,U> > &w);
+    template<typename U, typename V>
+    void operator()(const Phasors<U> &, PowerSpectrum<V> &);
+    template<typename U, typename V>
+    void operator()(const std::vector<Phasors<U> > &,
+			    std::vector<PowerSpectrum<V> > &);
+  private:
+    T wfirst,wlast;
+    std::vector<std::pair<T,T> > wavelengths;
+    int nOver;
+    std::vector<T> fftData;
+    bool validateWavelengths;
+    size_t validatedSize;
+  };
 
   template<typename T>
   void CalcPowerSpectrumFFT<T>::set_wavelength(T first, T last){
@@ -644,9 +661,29 @@ namespace amjInterferometry{
     ps.resize(ph.size());
     for(size_t i=0;i<ph.size();i++) operator()(ph[i],ps[i]);
   }
-
+  
+  //
   // CalcPowerSpectrumDFT
-
+  //
+  
+  template<typename T=float>
+  class CalcPowerSpectrumDFT: public CalcPowerSpectrum<T>{
+  public:
+    CalcPowerSpectrumDFT(){};
+    ~CalcPowerSpectrumDFT(){};
+    template<typename U>
+    void set_delay(const std::vector<U> &);
+    //template<typename U>
+    //void set_delay(const std::vector<std::vector<U> > &);
+    template<typename U, typename V>
+    void operator()(const Phasors<U> &, PowerSpectrum<V> &);
+    template<typename U, typename V>
+    void operator()(const std::vector<Phasors<U> > &,
+			    std::vector<PowerSpectrum<V> > &);
+  private:
+    std::vector<T> delay;
+  };
+    
   template<typename T>
   template<typename U>
   void CalcPowerSpectrumDFT<T>::set_delay(const std::vector<U> &d){
@@ -693,7 +730,11 @@ namespace amjInterferometry{
     for(size_t i=0;i<ph.size();i++)
       operator()(ph[i],ps[i]);
   }
-  
+
+  //
+  // AnalyzePowerSpectrum
+  //
+
   template<typename T=float>
   class AnalyzePowerSpectrum{
   public:
@@ -706,106 +747,6 @@ namespace amjInterferometry{
   private:
     T peak_width;
   };
-  
-
-
-// Widths: sample counts for time/output; delay units for the delay axis.
-struct DelayMachineConfig {
-  enum class TemporalMethod { None, Boxcar, Leaky };
-  enum class AxisMethod { None, Boxcar, Gaussian };
-  TemporalMethod time_method=TemporalMethod::Boxcar;
-  unsigned int time_width=5;
-  AxisMethod delay_axis_method=AxisMethod::None;
-  float delay_axis_width=0;
-  float peak_exclusion_width=40;
-  TemporalMethod output_method=TemporalMethod::None;
-  unsigned int output_width=1;
-  bool operator==(const DelayMachineConfig&) const;
-  bool operator!=(const DelayMachineConfig& c) const {return !(*this==c);}
-  void validate() const;
-};
-
-// A temporal smoother IS a PowerSpectrum; add() copies the newest metadata.
-// Stable delay grids are a caller contract until reset/configure.
-class SmoothPowerSpectrum : public PowerSpectrum<float> {
-public:
-  using Method=DelayMachineConfig::TemporalMethod;
-  SmoothPowerSpectrum(Method method=Method::Boxcar, unsigned int width=5);
-  void configure(Method method, unsigned int width);
-  void reset();
-  void add(const PowerSpectrum<float>&);
-private:
-  Method method_;
-  unsigned int width_;
-  float decay_=0;
-  size_t next_=0, count_=0;
-  std::vector<PowerSpectrum<float>> history_;
-};
-class BoxcarSmoothPowerSpectrum : public SmoothPowerSpectrum {
-public:
-  explicit BoxcarSmoothPowerSpectrum(unsigned int width=5)
-    : SmoothPowerSpectrum(Method::Boxcar,width) {}
-};
-class LeakyboxSmoothPowerSpectrum : public SmoothPowerSpectrum {
-public:
-  explicit LeakyboxSmoothPowerSpectrum(unsigned int width=5)
-    : SmoothPowerSpectrum(Method::Leaky,width) {}
-};
-
-  class DelayMachine {
-  public:
-    using Config=DelayMachineConfig;
-    using Phasors=amjInterferometry::Phasors<float>;
-    using PowerSpectrum=amjInterferometry::PowerSpectrum<float>;
-    using Calculator=std::function<void(const Phasors&,PowerSpectrum&)>;
-    using Analyzer=std::function<void(const PowerSpectrum&,float&,float&)>;
-    // Compatibility overload preserves the old zero-filled output startup.
-    DelayMachine(std::string,Calculator,int nIncoherent,int nSmooth,
-		 Analyzer analyzer=AnalyzePowerSpectrum<float>());
-    DelayMachine(std::string,Calculator,const Config& config=Config());
-    const std::string& name() const {return _name;}
-    void load(const Phasors&);
-    float delay() const {return _delay;}
-    float snr() const {return _snr;}
-    const amjTime& time() const {return pSpec.time();}
-    const PowerSpectrum& p() const {return pSpec;}
-    const Config& config() const {return config_;}
-    void set_config(const Config&);
-    void set_calculator(Calculator);
-    // Custom analyzers replace the default; peak_exclusion_width then has no effect.
-    void set_analyzer(Analyzer);
-    void use_default_analyzer();
-    void reset();
-  private:
-    void build_axis_weights();
-    std::string _name;
-    Config config_;
-    Calculator calculateSpectrum;
-    Analyzer analyzeSpectrum;
-    bool customAnalyzer_=false, legacyOutputStartup_=false;
-    PowerSpectrum raw_,pSpec;
-    SmoothPowerSpectrum temporal_;
-    std::vector<float> peakHistory,snrHistory;
-    size_t nextOutput_=0,outputCount_=0;
-    float outputDecay_=0,_delay=0,_snr=0;
-    // Sparse normalized kernel, built once per configuration/grid size.
-    std::vector<size_t> axisOffsets_,axisIndices_;
-    std::vector<double> axisWeights_;
-  };
-  
-  template<typename T>
-  int findMax(std::vector<T> &p){
-    int j=p.size()/2;
-    T max=0;
-    
-    for(int i=0;i<p.size();i++)
-      if(p[i]>max){
-	j=i;
-	max=p[i];
-      }
-    
-    return j;
-  }
   
   template<typename T>
   template<typename U, typename V>
@@ -835,6 +776,145 @@ public:
     
     snr=(peak-mean)/sqrt(v2/count-mean*mean);      
   }
+  
+  //
+  // PowerSpectrum smoothing
+  //
+  
+  // Gaussian
+  // 1/\sqrt{2pi}/sigma*exp(-(x-mu)^2/2\sigma^2)
+  inline double gaussian(double x, double m, double s){
+    return 1.0/sqrt(2*M_PI)/s*exp(-(x-m)*(x-m)/2.0/s/s);
+  }
+  
+  // Gaussian smoothing
+  template<typename T, typename U>
+  PowerSpectrum<T> gsmooth(const PowerSpectrum<T> &p, U sigma){
+    if(!std::isfinite(sigma) || sigma <= 0)
+      throw std::invalid_argument("Gaussian width must be positive and finite");
+    PowerSpectrum<T> result=p;
+    for(size_t i=0;i<p.size();i++){
+      long double weighted=0, weights=0;
+      for(size_t j=0;j<p.size();j++){
+        const long double x=(static_cast<long double>(p(j))-p(i))/sigma;
+        const long double weight=std::exp(-x*x/2);
+        weighted+=weight*p[j];
+        weights+=weight;
+      }
+      result[i]=static_cast<T>(weighted/weights);
+    }
+    return result;
+  }
+
+  // Boxcar smoothing
+  template<typename T, typename U>
+  PowerSpectrum<T> bsmooth(const PowerSpectrum<T> &p, U w){
+    PowerSpectrum<T> _p=p;
+    double g,s;
+    for(size_t i=0;i<p.size();i++){
+      g=0;
+      s=0;
+      for(size_t j=0;j<p.size();j++){
+	if(fabs(p(j)-p(i))<w/2){
+	  g++;
+	  s+=p[j];
+	}
+      }
+      _p[i]=s/g;
+    }
+    return _p;
+  }
+
+
+  //
+  // DelayMachine
+  //
+  
+  // Widths: sample counts for time/output; delay units for the delay axis.
+  struct DelayMachineConfig {
+    enum class TemporalMethod { None, Boxcar, Leaky };
+    enum class AxisMethod { None, Boxcar, Gaussian };
+    // These select the internally owned default averager.
+    TemporalMethod time_method=TemporalMethod::Boxcar;
+    unsigned int time_width=5;
+    AxisMethod delay_axis_method=AxisMethod::None;
+    float delay_axis_width=0;
+    float peak_exclusion_width=40;
+    TemporalMethod output_method=TemporalMethod::None;
+    unsigned int output_width=1;
+    bool operator==(const DelayMachineConfig&) const;
+    bool operator!=(const DelayMachineConfig& c) const {return !(*this==c);}
+    void validate() const;
+  };
+  
+  class DelayMachine {
+  public:
+    using Config=DelayMachineConfig;
+    using Phasors=amjInterferometry::Phasors<float>;
+    using PowerSpectrum=amjInterferometry::PowerSpectrum<float>;
+    using Averager=PowerSpectrumAverage<float>;
+    using Calculator=std::function<void(const Phasors&,PowerSpectrum&)>;
+    using Analyzer=std::function<void(const PowerSpectrum&,float&,float&)>;
+    // Compatibility overload preserves the old zero-filled output startup.
+    DelayMachine(std::string,Calculator,int nIncoherent,int nSmooth,
+		 Analyzer analyzer=AnalyzePowerSpectrum<float>());
+    DelayMachine(std::string,Calculator,const Config& config=Config());
+    const std::string& name() const {return _name;}
+    void load(const Phasors&);
+    float delay() const {return _delay;}
+    float snr() const {return _snr;}
+    const amjTime& time() const {return pSpec.time();}
+    const PowerSpectrum& p() const {return pSpec;}
+    const Config& config() const {return config_;}
+    void set_config(const Config&);
+    void set_calculator(Calculator);
+    // The caller owns an injected averager and configures its mode and width.
+    void set_averager(Averager&);
+    void use_default_averager();
+    // Custom analyzers replace the default; peak_exclusion_width then has no effect.
+    void set_analyzer(Analyzer);
+    void use_default_analyzer();
+    void reset();
+  private:
+    void configure_default_averager();
+    void build_axis_weights();
+    std::string _name;
+    Config config_;
+    Calculator calculateSpectrum;
+    Analyzer analyzeSpectrum;
+    bool customAnalyzer_=false, legacyOutputStartup_=false;
+    PowerSpectrum raw_,pSpec;
+    std::unique_ptr<Averager> ownedAverager_;
+    Averager* averager_=nullptr;
+    std::vector<float> peakHistory,snrHistory;
+    size_t nextOutput_=0,outputCount_=0;
+    float outputDecay_=0,_delay=0,_snr=0;
+    // Sparse normalized kernel, built once per configuration/grid size.
+    std::vector<size_t> axisOffsets_,axisIndices_;
+    std::vector<double> axisWeights_;
+  };
+  
+  //
+  // Obsolete
+  //
+  
+  template<typename T>
+  int findMax(std::vector<T> &p);
+  
+  template<typename T>
+  int findMax(std::vector<T> &p){
+    int j=p.size()/2;
+    T max=0;
+    
+    for(int i=0;i<p.size();i++)
+      if(p[i]>max){
+	j=i;
+	max=p[i];
+      }
+    
+    return j;
+  }
+  
 }
 
 #endif /* _AMJINTERFEROMETRY */

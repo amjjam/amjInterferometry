@@ -82,41 +82,11 @@ void DelayMachineConfig::validate() const {
      !std::isfinite(peak_exclusion_width)||peak_exclusion_width<0)
     throw std::invalid_argument("Invalid DelayMachine configuration");
 }
-SmoothPowerSpectrum::SmoothPowerSpectrum(Method m,unsigned int w){configure(m,w);}
-void SmoothPowerSpectrum::configure(Method m,unsigned int w){
-  DelayMachineConfig c;c.time_method=m;c.time_width=w;c.validate();
-  method_=m;width_=w;decay_=std::exp(-1.0f/w);
-  history_.resize(m==Method::Boxcar?w:0);reset();
-}
-void SmoothPowerSpectrum::reset(){
-  clear();time(amjTime());next_=count_=0;
-  for(auto& p:history_)p.clear();
-}
-void SmoothPowerSpectrum::add(const PowerSpectrum<float>& p){
-  if(!p.size())throw std::invalid_argument("Empty smoothing input");
-  if(size() && size()!=p.size())throw std::invalid_argument("Smoothing size changed; reset first");
-  if(method_==Method::None){PowerSpectrum<float>::operator=(p);return;}
-  if(method_==Method::Leaky){
-    if(!size())PowerSpectrum<float>::operator=(p);
-    else {
-      for(size_t i=0;i<size();++i)(*this)[i]=decay_*(*this)[i]+(1-decay_)*p[i];
-      name(p.name());time(p.time());
-    }
-    return;
-  }
-  history_[next_]=p;
-  PowerSpectrum<float>::operator=(p);
-  count_=std::min(count_+1,static_cast<size_t>(width_));
-  for(size_t j=0;j<count_;++j)if(j!=next_)
-    for(size_t i=0;i<size();++i)(*this)[i]+=history_[j][i];
-  (*this)/=count_;
-  next_=(next_+1)%width_;
-}
 DelayMachine::DelayMachine(std::string name,Calculator calc,const Config& c)
  : _name(std::move(name)),calculateSpectrum(std::move(calc)) {
   if(!calculateSpectrum)throw std::invalid_argument("Empty spectrum calculator");
   c.validate();config_=c;
-  temporal_.configure(c.time_method,c.time_width);
+  configure_default_averager();
   peakHistory.resize(c.output_width);snrHistory.resize(c.output_width);
   outputDecay_=std::exp(-1.0f/c.output_width);
   use_default_analyzer();
@@ -133,15 +103,20 @@ DelayMachine::DelayMachine(std::string name,Calculator calc,int ni,int ns,Analyz
 }
 void DelayMachine::set_config(const Config& c){
   c.validate();if(c==config_)return;
+  const bool useOwned=bool(ownedAverager_);
   const bool timeChange=c.time_method!=config_.time_method||c.time_width!=config_.time_width;
   const bool axisChange=c.delay_axis_method!=config_.delay_axis_method||c.delay_axis_width!=config_.delay_axis_width;
   const bool analysisChange=c.peak_exclusion_width!=config_.peak_exclusion_width;
-  if(timeChange)temporal_.configure(c.time_method,c.time_width);
+  config_=c;
+  if(timeChange){
+    if(useOwned)configure_default_averager();
+    else if(averager_)averager_->reset();
+  }
   if(timeChange||axisChange){axisOffsets_.clear();pSpec.clear();}
   // Any changed upstream weighting invalidates the final output history.
   peakHistory.assign(c.output_width,0);snrHistory.assign(c.output_width,0);
   nextOutput_=outputCount_=0;_delay=_snr=0;
-  config_=c;legacyOutputStartup_=false;outputDecay_=std::exp(-1.0f/c.output_width);
+  legacyOutputStartup_=false;outputDecay_=std::exp(-1.0f/c.output_width);
   if(analysisChange&&!customAnalyzer_){
     AnalyzePowerSpectrum<float> a;a.set_peak_width(c.peak_exclusion_width);analyzeSpectrum=a;
   }
@@ -149,6 +124,21 @@ void DelayMachine::set_config(const Config& c){
 void DelayMachine::set_calculator(Calculator c){
   if(!c)throw std::invalid_argument("Empty spectrum calculator");
   calculateSpectrum=std::move(c);reset();
+}
+void DelayMachine::configure_default_averager(){
+  using M=Config::TemporalMethod;
+  if(config_.time_method==M::Leaky)
+    ownedAverager_.reset(new PowerSpectrumLeakyBox<float>(config_.time_width));
+  else
+    ownedAverager_.reset(new PowerSpectrumBoxcar<float>(
+      config_.time_method==M::None?1:config_.time_width));
+  averager_=ownedAverager_.get();
+}
+void DelayMachine::set_averager(Averager& a){
+  ownedAverager_.reset();averager_=&a;reset();
+}
+void DelayMachine::use_default_averager(){
+  configure_default_averager();reset();
 }
 void DelayMachine::set_analyzer(Analyzer a){
   if(!a)throw std::invalid_argument("Empty spectrum analyzer");
@@ -159,7 +149,7 @@ void DelayMachine::use_default_analyzer(){
   analyzeSpectrum=a;customAnalyzer_=false;reset();
 }
 void DelayMachine::reset(){
-  raw_.clear();temporal_.reset();pSpec.clear();pSpec.time(amjTime());
+  raw_.clear();if(averager_)averager_->reset();pSpec.clear();pSpec.time(amjTime());
   axisOffsets_.clear();axisIndices_.clear();axisWeights_.clear();
   std::fill(peakHistory.begin(),peakHistory.end(),0);
   std::fill(snrHistory.begin(),snrHistory.end(),0);
@@ -168,10 +158,10 @@ void DelayMachine::reset(){
 void DelayMachine::build_axis_weights(){
   axisOffsets_.clear();axisIndices_.clear();axisWeights_.clear();
   const double width=config_.delay_axis_width;
-  for(size_t i=0;i<temporal_.size();++i){
+  for(size_t i=0;i<averager_->size();++i){
     axisOffsets_.push_back(axisIndices_.size());double sum=0;
-    for(size_t j=0;j<temporal_.size();++j){
-      double x=(double(temporal_(j))-temporal_(i))/width;
+    for(size_t j=0;j<averager_->size();++j){
+      double x=(double((*averager_)(j))-(*averager_)(i))/width;
       double w=config_.delay_axis_method==Config::AxisMethod::Boxcar
         ? (std::abs(x)<0.5?1:0) : std::exp(-4*x*x);
       if(w>0){axisIndices_.push_back(j);axisWeights_.push_back(w);sum+=w;}
@@ -182,13 +172,14 @@ void DelayMachine::build_axis_weights(){
 }
 void DelayMachine::load(const Phasors& ph){
   calculateSpectrum(ph,raw_);
-  temporal_.add(raw_);pSpec=temporal_;pSpec.time(ph.time());
+  if(!averager_)throw std::logic_error("No power spectrum averager set");
+  averager_->add(raw_);pSpec=*averager_;pSpec.time(ph.time());
   if(config_.delay_axis_method!=Config::AxisMethod::None){
     if(axisOffsets_.empty())build_axis_weights();
     for(size_t i=0;i<pSpec.size();++i){
       double sum=0;
       for(size_t k=axisOffsets_[i];k<axisOffsets_[i+1];++k)
-        sum+=axisWeights_[k]*temporal_[axisIndices_[k]];
+        sum+=axisWeights_[k]*(*averager_)[axisIndices_[k]];
       pSpec[i]=float(sum);
     }
   }
