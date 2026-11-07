@@ -234,7 +234,7 @@ namespace amjInterferometry{
     }
   }
 
-  template<typename T>
+  template<typename T=float>
   class PhasorsLeakyBox:public PhasorsAverage<T>{
     using PhasorsAverage<T>::_time;
     using PhasorsAverage<T>::_name;
