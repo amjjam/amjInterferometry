@@ -148,6 +148,7 @@ namespace amjInterferometry{
   
   template<typename T=float>
   class PhasorsAverage: public Phasors<T>{
+  protected:
     using Phasors<T>::_w;
     using Phasors<T>::_p;
   public:
