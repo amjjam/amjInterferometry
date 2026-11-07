@@ -518,7 +518,7 @@ namespace amjInterferometry{
   class CalcPowerSpectrum{
   public:
     CalcPowerSpectrum(){};
-    ~CalcPowerSpectrum()=0;
+    virtual ~CalcPowerSpectrum()=0;
     template<typename U, typename V>
     void operator()(const Phasors<U> &, PowerSpectrum<V> &);
     template<typename U, typename V>
@@ -831,68 +831,68 @@ namespace amjInterferometry{
   //
   
   // Widths: sample counts for time/output; delay units for the delay axis.
-  struct DelayMachineConfig {
-    enum class TemporalMethod { None, Boxcar, Leaky };
-    enum class AxisMethod { None, Boxcar, Gaussian };
-    // These select the internally owned default averager.
-    TemporalMethod time_method=TemporalMethod::Boxcar;
-    unsigned int time_width=5;
-    AxisMethod delay_axis_method=AxisMethod::None;
-    float delay_axis_width=0;
-    float peak_exclusion_width=40;
-    TemporalMethod output_method=TemporalMethod::None;
-    unsigned int output_width=1;
-    bool operator==(const DelayMachineConfig&) const;
-    bool operator!=(const DelayMachineConfig& c) const {return !(*this==c);}
-    void validate() const;
-  };
-  
-  class DelayMachine {
-  public:
-    using Config=DelayMachineConfig;
-    using Phasors=amjInterferometry::Phasors<float>;
-    using PowerSpectrum=amjInterferometry::PowerSpectrum<float>;
-    using Averager=PowerSpectrumAverage<float>;
-    using Calculator=std::function<void(const Phasors&,PowerSpectrum&)>;
-    using Analyzer=std::function<void(const PowerSpectrum&,float&,float&)>;
-    // Compatibility overload preserves the old zero-filled output startup.
-    DelayMachine(std::string,Calculator,int nIncoherent,int nSmooth,
-		 Analyzer analyzer=AnalyzePowerSpectrum<float>());
-    DelayMachine(std::string,Calculator,const Config& config=Config());
-    const std::string& name() const {return _name;}
-    void load(const Phasors&);
-    float delay() const {return _delay;}
-    float snr() const {return _snr;}
-    const amjTime& time() const {return pSpec.time();}
-    const PowerSpectrum& p() const {return pSpec;}
-    const Config& config() const {return config_;}
-    void set_config(const Config&);
-    void set_calculator(Calculator);
-    // The caller owns an injected averager and configures its mode and width.
-    void set_averager(Averager&);
-    void use_default_averager();
-    // Custom analyzers replace the default; peak_exclusion_width then has no effect.
-    void set_analyzer(Analyzer);
-    void use_default_analyzer();
-    void reset();
-  private:
-    void configure_default_averager();
-    void build_axis_weights();
-    std::string _name;
-    Config config_;
-    Calculator calculateSpectrum;
-    Analyzer analyzeSpectrum;
-    bool customAnalyzer_=false, legacyOutputStartup_=false;
-    PowerSpectrum raw_,pSpec;
-    std::unique_ptr<Averager> ownedAverager_;
-    Averager* averager_=nullptr;
-    std::vector<float> peakHistory,snrHistory;
-    size_t nextOutput_=0,outputCount_=0;
-    float outputDecay_=0,_delay=0,_snr=0;
-    // Sparse normalized kernel, built once per configuration/grid size.
-    std::vector<size_t> axisOffsets_,axisIndices_;
-    std::vector<double> axisWeights_;
-  };
+  // struct DelayMachineConfig {
+  //   enum class TemporalMethod { None, Boxcar, Leaky };
+  //   enum class AxisMethod { None, Boxcar, Gaussian };
+  //   // These select the internally owned default averager.
+  //   TemporalMethod time_method=TemporalMethod::Boxcar;
+  //   unsigned int time_width=5;
+  //   AxisMethod delay_axis_method=AxisMethod::None;
+  //   float delay_axis_width=0;
+  //   float peak_exclusion_width=40;
+  //   TemporalMethod output_method=TemporalMethod::None;
+  //   unsigned int output_width=1;
+  //   bool operator==(const DelayMachineConfig&) const;
+  //   bool operator!=(const DelayMachineConfig& c) const {return !(*this==c);}
+  //   void validate() const;
+  // };
+
+  // class DelayMachine {
+  // public:
+  //   using Config=DelayMachineConfig;
+  //   using Phasors=amjInterferometry::Phasors<float>;
+  //   using PowerSpectrum=amjInterferometry::PowerSpectrum<float>;
+  //   using Averager=PowerSpectrumAverage<float>;
+  //   using Calculator=std::function<void(const Phasors&,PowerSpectrum&)>;
+  //   using Analyzer=std::function<void(const PowerSpectrum&,float&,float&)>;
+  //   // Compatibility overload preserves the old zero-filled output startup.
+  //   DelayMachine(std::string,Calculator,int nIncoherent,int nSmooth,
+  // 		 Analyzer analyzer=AnalyzePowerSpectrum<float>());
+  //   DelayMachine(std::string,Calculator,const Config& config=Config());
+  //   const std::string& name() const {return _name;}
+  //   void load(const Phasors&);
+  //   float delay() const {return _delay;}
+  //   float snr() const {return _snr;}
+  //   const amjTime& time() const {return pSpec.time();}
+  //   const PowerSpectrum& p() const {return pSpec;}
+  //   const Config& config() const {return config_;}
+  //   void set_config(const Config&);
+  //   void set_calculator(Calculator);
+  //   // The caller owns an injected averager and configures its mode and width.
+  //   void set_averager(Averager&);
+  //   void use_default_averager();
+  //   // Custom analyzers replace the default; peak_exclusion_width then has no effect.
+  //   void set_analyzer(Analyzer);
+  //   void use_default_analyzer();
+  //   void reset();
+  // private:
+  //   void configure_default_averager();
+  //   void build_axis_weights();
+  //   std::string _name;
+  //   Config config_;
+  //   Calculator calculateSpectrum;
+  //   Analyzer analyzeSpectrum;
+  //   bool customAnalyzer_=false, legacyOutputStartup_=false;
+  //   PowerSpectrum raw_,pSpec;
+  //   std::unique_ptr<Averager> ownedAverager_;
+  //   Averager* averager_=nullptr;
+  //   std::vector<float> peakHistory,snrHistory;
+  //   size_t nextOutput_=0,outputCount_=0;
+  //   float outputDecay_=0,_delay=0,_snr=0;
+  //   // Sparse normalized kernel, built once per configuration/grid size.
+  //   std::vector<size_t> axisOffsets_,axisIndices_;
+  //   std::vector<double> axisWeights_;
+  // };
   
   //
   // Obsolete
