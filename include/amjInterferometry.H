@@ -392,31 +392,11 @@ namespace amjInterferometry{
     using PowerSpectrum<T>::_delay;
     using PowerSpectrum<T>::_power;
   public:
-    PowerSpectrumAverage():old_N(0),old_d0(0),old_d1(0){}
+    PowerSpectrumAverage(){}
     virtual ~PowerSpectrumAverage(){}
     virtual bool add(const PowerSpectrum<T>&)=0;
-    virtual double Tavg()=0;
-    virtual void Tavg(double)=0;
-    virtual void reset(){PowerSpectrum<T>::clear();_time=amjTime();old_N=0;}
-    bool old(size_t& N,T& d0,T& d1) const {N=old_N;d0=old_d0;d1=old_d1;return old_N>0;}
-  protected:
-    bool update(const PowerSpectrum<T>& p){
-      if(!p.size())throw std::invalid_argument("Empty averaging input");
-      if(_delay.size()>0&&p.size()==_delay.size()&&p(0)==_delay[0]&&
-         p(p.size()-1)==_delay.back()&&_name==p.name())return false;
-      set_old();
-      _delay.resize(p.size());_power.assign(p.size(),T(0));
-      for(size_t i=0;i<p.size();++i)_delay[i]=p(i);
-      _name=p.name();
-      return true;
-    }
-    void set_old(){
-      if(!_delay.size())return;
-      old_N=_delay.size();old_d0=_delay[0];old_d1=_delay.back();
-    }
-  private:
-    size_t old_N;
-    T old_d0,old_d1;
+    virtual double tavg()=0;
+    virtual void tavg(double)=0;
   };
 
   //
@@ -429,10 +409,10 @@ namespace amjInterferometry{
     using PowerSpectrumAverage<T>::_power;
     using PowerSpectrumAverage<T>::update;
   public:
-    PowerSpectrumBoxcar(double w=1):n(1),index(0){Tavg(w);}
+    PowerSpectrumBoxcar(double w=1){tavg(w);}
     virtual ~PowerSpectrumBoxcar(){};
-    double Tavg() override {return w;}
-    void Tavg(double);
+    double tavg() override {return w;}
+    void tavg(double);
     bool add(const PowerSpectrum<T>&) override;
     void reset() override {PowerSpectrumAverage<T>::reset();_h.clear();index=0;}
   private:
@@ -443,7 +423,7 @@ namespace amjInterferometry{
   };
 
   template<typename T>
-  void PowerSpectrumBoxcar<T>::Tavg(double t){
+  void PowerSpectrumBoxcar<T>::tavg(double t){
     if(!std::isfinite(t))throw std::invalid_argument("Boxcar width must be finite");
     w=std::max(1.0,t);
     size_t new_n=std::round(w);
@@ -485,17 +465,17 @@ namespace amjInterferometry{
     using PowerSpectrumAverage<T>::_power;
     using PowerSpectrumAverage<T>::update;
   public:
-    PowerSpectrumLeakyBox(double w=1){Tavg(w);}
+    PowerSpectrumLeakyBox(double w=1){tavg(w);}
     virtual ~PowerSpectrumLeakyBox(){};
-    double Tavg() override {return w;}
-    void Tavg(double);
+    double tavg() override {return w;}
+    void tavg(double);
     bool add(const PowerSpectrum<T>&) override;
   private:
     double w;
   };
 
   template<typename T>
-  void PowerSpectrumLeakyBox<T>::Tavg(double t){
+  void PowerSpectrumLeakyBox<T>::tavg(double t){
     if(!std::isfinite(t))throw std::invalid_argument("Leaky-box width must be finite");
     w=std::max(1.0,t);
   }
