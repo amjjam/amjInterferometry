@@ -155,8 +155,8 @@ namespace amjInterferometry{
     PhasorsAverage(){};
     virtual ~PhasorsAverage(){};
     virtual bool add(const Phasors<T> &p);
-    virtual double Tavg()=0;
-    virtual void Tavg(double)=0;
+    virtual double tavg()=0;
+    virtual void tavg(double)=0;
   };
   
   template<typename T=float>
@@ -168,8 +168,8 @@ namespace amjInterferometry{
   public:
     PhasorsBoxcar(const Phasors<T> &p, double tavg=1);
     virtual ~PhasorsBoxcar(){};
-    virtual double Tavg() override {return w;}
-    virtual void Tavg(double) override;
+    virtual double tavg() override {return w;}
+    virtual void tavg(double) override;
     virtual bool add(const Phasors<T> &p) override;
   private:
     double w;
@@ -181,18 +181,18 @@ namespace amjInterferometry{
   };
 
   template<typename T>
-  PhasorsBoxcar<T>::PhasorsBoxcar(const Phasors<T> &p, double tavg):n(1),index(0){
+  PhasorsBoxcar<T>::PhasorsBoxcar(const Phasors<T> &p, double Tavg):n(1),index(0){
     _name=p.name();
     _time=p.time();
     _w.resize(p.size());
     for(size_t i=0;i<_w.size();i++)
       _w[i]=p(i);
     _p.resize(p.size());
-    Tavg(tavg);
+    tavg(Tavg);
   }
   
   template<typename T>
-  void PhasorsBoxcar<T>::Tavg(double t){
+  void PhasorsBoxcar<T>::tavg(double t){
     w=t;
     if(w<1)
       w=1;
@@ -241,11 +241,11 @@ namespace amjInterferometry{
     using PhasorsAverage<T>::_w;
     using PhasorsAverage<T>::_p;
   public:
-    PhasorsLeakyBox(double w){Tavg(w);}
+    PhasorsLeakyBox(double w){tavg(w);}
     virtual ~PhasorsLeakyBox(){};
     virtual bool add(const Phasors<T> &p) override;
-    virtual double Tavg() override {return w;}
-    virtual void Tavg(double t) override {w=t; if(w<1) w=1;}
+    virtual double tavg() override {return w;}
+    virtual void tavg(double t) override {w=t; if(w<1) w=1;}
   private:
     double w;
     bool update(const Phasors<T> &p);
