@@ -405,43 +405,56 @@ namespace amjInterferometry{
   
   template<typename T=float>
   class PowerSpectrumBoxcar: public PowerSpectrumAverage<T>{
+    using PowerSpectrumAverage<T>::_name;
     using PowerSpectrumAverage<T>::_time;
+    using PowerSpectrumAverage<T>::_delay;
     using PowerSpectrumAverage<T>::_power;
-    using PowerSpectrumAverage<T>::update;
   public:
     PowerSpectrumBoxcar(double w=1){tavg(w);}
     virtual ~PowerSpectrumBoxcar(){};
     double tavg() override {return w;}
     void tavg(double);
     bool add(const PowerSpectrum<T>&) override;
-    void reset() override {PowerSpectrumAverage<T>::reset();_h.clear();index=0;}
   private:
     double w;
     size_t n,index;
     std::vector<std::vector<T>> _h;
     void update_average();
+    bool update(const PowerSpectrum<T> &);
   };
 
   template<typename T>
   void PowerSpectrumBoxcar<T>::tavg(double t){
-    if(!std::isfinite(t))throw std::invalid_argument("Boxcar width must be finite");
+    if(!std::isfinite(t))
+      throw std::invalid_argument("Boxcar width must be finite");
     w=std::max(1.0,t);
     size_t new_n=std::round(w);
     if(new_n==n)return;
-    if(_h.size()==n)std::rotate(_h.begin(),_h.begin()+index,_h.end());
+    if(_h.size()==n)
+      std::rotate(_h.begin(),_h.begin()+index,_h.end());
     index=0;
-    if(_h.size()>new_n)_h.erase(_h.begin(),_h.end()-new_n);
-    n=new_n;update_average();
+    if(_h.size()>new_n)
+      _h.erase(_h.begin(),_h.end()-new_n);
+    n=new_n;
+    update_average();
   }
 
   template<typename T>
   bool PowerSpectrumBoxcar<T>::add(const PowerSpectrum<T>& p){
     bool changed=update(p);
-    if(changed){_h.clear();index=0;}
-    if(_h.size()<n){_h.emplace_back(p.size());index=_h.size()-1;}
-    for(size_t i=0;i<p.size();++i)_h[index][i]=p[i];
+    if(changed){
+      _h.clear();
+      index=0;
+    }
+    if(_h.size()<n){
+      _h.emplace_back(p.size());
+      index=_h.size()-1;
+    }
+    for(size_t i=0;i<p.size();++i)
+      _h[index][i]=p[i];
     index=(index+1)%_h.size();
-    update_average();_time=p.time();
+    update_average();
+    _time=p.time();
     return changed;
   }
 
@@ -455,15 +468,29 @@ namespace amjInterferometry{
     }
   }
 
+  template<typename T>
+  bool PowerSpectrumBoxcar<T>::update(const PowerSpectrum<T> &p){
+    if(p.size()==_delay.size()&&p(0)==_delay[0]
+       &&p(p.size())=_delay[_delay.size()]&&_name=p.name())
+      return false;
+    _delay.resize(p.size());
+    for(size_t i=0;i<_delay.size();i++)
+      _delay[i]=p(i);
+    _power.resize(p.size());
+    _name=p.name();
+    return true;
+  }
+  
   //
   // PowerSpectrumLeakyBox
   //
   
   template<typename T=float>
   class PowerSpectrumLeakyBox: public PowerSpectrumAverage<T>{
+    using PowerSpectrumAverage<T>::_name;
     using PowerSpectrumAverage<T>::_time;
+    using PowerSpectrumAverage<T>::_delay;
     using PowerSpectrumAverage<T>::_power;
-    using PowerSpectrumAverage<T>::update;
   public:
     PowerSpectrumLeakyBox(double w=1){tavg(w);}
     virtual ~PowerSpectrumLeakyBox(){};
@@ -472,11 +499,13 @@ namespace amjInterferometry{
     bool add(const PowerSpectrum<T>&) override;
   private:
     double w;
+    bool update(const PowerSpectrum<T> &);
   };
 
   template<typename T>
   void PowerSpectrumLeakyBox<T>::tavg(double t){
-    if(!std::isfinite(t))throw std::invalid_argument("Leaky-box width must be finite");
+    if(!std::isfinite(t))
+      throw std::invalid_argument("Leaky-box width must be finite");
     w=std::max(1.0,t);
   }
 
@@ -484,13 +513,27 @@ namespace amjInterferometry{
   bool PowerSpectrumLeakyBox<T>::add(const PowerSpectrum<T>& p){
     bool changed=update(p);
     double alpha=1.0/w;
-    if(changed)alpha=1;
+    if(changed)
+      alpha=1;
     for(size_t i=0;i<_power.size();++i)
       _power[i]=alpha*p[i]+(1-alpha)*_power[i];
     _time=p.time();
     return changed;
   }
-  
+
+  template<typename T>
+  bool PowerSpectrumLeakyBox<T>::update(const PowerSpectrum<T> &p){
+    if(p.size()==_delay.size()&&p(0)==_delay[0]
+       &&p(p.size())=_delay[_delay.size()]&&_name=p.name())
+      return false;
+    _delay.resize(p.size());
+    for(size_t i=0;i<_delay.size();i++)
+      _delay[i]=p(i);
+    _power.resize(p.size());
+    _name=p.name();
+    return true;
+  }
+
   //
   // CalcPowerSpectrum
   //
