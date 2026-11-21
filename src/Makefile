@@ -8,7 +8,7 @@ endif
 LIBS=-lamjCom
 LDFLAGS=-L$(prefix_amjCom)/lib
 
-FLAGS=-Wall -g -fPIC -I$(prefix_amjCom)/include
+FLAGS=-std=c++20 -Wall -g -fPIC -I$(prefix_amjCom)/include
 CPPFLAGS=$(FLAGS)
 
 AMJINTERFEROMETRY_SRC=amjInterferometry.C

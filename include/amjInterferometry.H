@@ -15,6 +15,7 @@
 #include <utility>
 #include <functional>
 #include <memory>
+#include <format>
 
 #include <amjTime.H>
 
@@ -70,6 +71,7 @@ namespace amjInterferometry{
   class Phasors{
   public:
     Phasors(size_t n=0){_w.resize(n); _p.resize(n);};
+    Phasors(const Phasors &)=default;
     virtual ~Phasors(){};
     void name(const std::string &n){_name=n;}
     const std::string &name() const {return _name;};
@@ -152,7 +154,8 @@ namespace amjInterferometry{
     using Phasors<T>::_w;
     using Phasors<T>::_p;
   public:
-    PhasorsAverage(){};
+    PhasorsAverage()=default;
+    explicit PhasorsAverage(const Phasors<T> &p):Phasors<T>(p){};
     virtual ~PhasorsAverage(){};
     virtual bool add(const Phasors<T> &p);
     virtual double tavg()=0;
@@ -166,7 +169,8 @@ namespace amjInterferometry{
     using PhasorsAverage<T>::_w;
     using PhasorsAverage<T>::_p;
   public:
-    PhasorsBoxcar(const Phasors<T> &p, double tavg=1);
+    PhasorsBoxcar(const Phasors<T> &p, double w=1):
+      PhasorsAverage<T>(p),n(1),index(0){tavg(w);}
     virtual ~PhasorsBoxcar(){};
     virtual double tavg() override {return w;}
     virtual void tavg(double) override;
@@ -181,30 +185,20 @@ namespace amjInterferometry{
   };
 
   template<typename T>
-  PhasorsBoxcar<T>::PhasorsBoxcar(const Phasors<T> &p, double Tavg):n(1),index(0){
-    _name=p.name();
-    _time=p.time();
-    _w.resize(p.size());
-    for(size_t i=0;i<_w.size();i++)
-      _w[i]=p(i);
-    _p.resize(p.size());
-    tavg(Tavg);
-  }
-  
-  template<typename T>
   void PhasorsBoxcar<T>::tavg(double t){
-    w=t;
-    if(w<1)
-      w=1;
-    size_t new_n=std::round(w);
+    w=std::max(1.0,t);
+    const auto new_n=static_cast<std::size_t>(std::round(w));
     if(new_n==n)
       return;
-    if (_h.size()==n) // history is full; index points to the oldest sample
+
+    if(_h.size()==n && index!=0)
       std::rotate(_h.begin(),_h.begin()+index,_h.end());
-    index=0;
-    if (_h.size()>new_n)
-      _h.erase(_h.begin(),_h.end()-new_n); // discard oldest, keep newest
+    
+    if(_h.size()>new_n)
+      _h.erase(_h.begin(),_h.end()-new_n);
+    
     n=new_n;
+    index=0;
     update_average();
   }
   
@@ -224,7 +218,7 @@ namespace amjInterferometry{
 
   template<typename T>
   void PhasorsBoxcar<T>::update_average(){
-    if(_h.size()==0)
+    if(_h.empty())
       return;
     for(size_t i=0;i<_p.size();i++){
       _p[i]=0;
@@ -241,7 +235,8 @@ namespace amjInterferometry{
     using PhasorsAverage<T>::_w;
     using PhasorsAverage<T>::_p;
   public:
-    PhasorsLeakyBox(double w){tavg(w);}
+    PhasorsLeakyBox(const Phasors<T> &p, double w=1):
+      PhasorsAverage<T>(p){tavg(w);}
     virtual ~PhasorsLeakyBox(){};
     virtual bool add(const Phasors<T> &p) override;
     virtual double tavg() override {return w;}
@@ -253,7 +248,7 @@ namespace amjInterferometry{
   
   template<typename T>
   bool PhasorsLeakyBox<T>::add(const Phasors<T> &p){
-    double alpha=1.0/w;
+    T alpha=1.0/w;
     alpha=alpha<1?1:alpha;
     for(size_t i=0;i<_w.size();i++)
       _p[i]=p[i]*alpha+_p[i]*(1-alpha);
@@ -394,7 +389,7 @@ namespace amjInterferometry{
   public:
     PowerSpectrumAverage(){}
     virtual ~PowerSpectrumAverage(){}
-    virtual bool add(const PowerSpectrum<T>&)=0;
+    virtual PowerSpectrumAverage<T> &operator()(const PowerSpectrum<T>&)=0;
     virtual double tavg()=0;
     virtual void tavg(double)=0;
   };
@@ -414,7 +409,7 @@ namespace amjInterferometry{
     virtual ~PowerSpectrumBoxcar(){};
     double tavg() override {return w;}
     void tavg(double);
-    bool add(const PowerSpectrum<T>&) override;
+    PowerSpectrumBoxcar<T> &operator()(const PowerSpectrum<T>&) override;
   private:
     double w;
     size_t n,index;
@@ -440,7 +435,7 @@ namespace amjInterferometry{
   }
 
   template<typename T>
-  bool PowerSpectrumBoxcar<T>::add(const PowerSpectrum<T>& p){
+  PowerSpectrumBoxcar<T> &PowerSpectrumBoxcar<T>::operator()(const PowerSpectrum<T>& p){
     bool changed=update(p);
     if(changed){
       _h.clear();
@@ -455,7 +450,7 @@ namespace amjInterferometry{
     index=(index+1)%_h.size();
     update_average();
     _time=p.time();
-    return changed;
+    return *this;
   }
 
   template<typename T>
@@ -496,7 +491,7 @@ namespace amjInterferometry{
     virtual ~PowerSpectrumLeakyBox(){};
     double tavg() override {return w;}
     void tavg(double);
-    bool add(const PowerSpectrum<T>&) override;
+    PowerSpectrumLeakyBox<T> &operator()(const PowerSpectrum<T>&) override;
   private:
     double w;
     bool update(const PowerSpectrum<T> &);
@@ -510,7 +505,7 @@ namespace amjInterferometry{
   }
 
   template<typename T>
-  bool PowerSpectrumLeakyBox<T>::add(const PowerSpectrum<T>& p){
+  PowerSpectrumLeakyBox<T> &PowerSpectrumLeakyBox<T>::operator()(const PowerSpectrum<T>& p){
     bool changed=update(p);
     double alpha=1.0/w;
     if(changed)
@@ -518,7 +513,7 @@ namespace amjInterferometry{
     for(size_t i=0;i<_power.size();++i)
       _power[i]=alpha*p[i]+(1-alpha)*_power[i];
     _time=p.time();
-    return changed;
+    return *this;
   }
 
   template<typename T>
@@ -565,115 +560,100 @@ namespace amjInterferometry{
   template<typename T=float>
   class CalcPowerSpectrumFFT: public CalcPowerSpectrum<T>{
   public:
-    CalcPowerSpectrumFFT():wfirst(0),wlast(0),nOver(1),
-      validateWavelengths(false),validatedSize(0){};
+    CalcPowerSpectrumFFT():wfirst(0),wlast(0),nOver(1){};
+    CalcPowerSpectrumFFT(const Phasors<T> &, int);
     virtual ~CalcPowerSpectrumFFT(){};
-    void set_nover(int n){
-      if(n < 1) throw std::invalid_argument("FFT oversampling must be positive");
-      nOver=n;
-    };
-    // Assume a stable channel grid. When enabled, validate once, then cache.
-    // Calling this setter again (even with true) forces a fresh check.
-    void set_validate_wavelengths(bool enabled){
-      validateWavelengths=enabled;
-      validatedSize=0;
-    }
-    void set_wavelength(T, T);
-    template<typename U>
-    void set_wavelength(const std::vector<std::pair<U,U> > &w);
+    void set_nover(int n){nOver=static_cast<size_t>(std::max(1,n)); conf();}
+    void set_nphasors(int n){nPhasors=static_cast<size_t>(std::max(2,n));
+      conf();}
+    void set_wavelength(T w0, T w1){wfirst=w0; wlast=21; conf();}
     template<typename U, typename V>
     void operator()(const Phasors<U> &, PowerSpectrum<V> &);
     template<typename U, typename V>
     void operator()(const std::vector<Phasors<U> > &,
 			    std::vector<PowerSpectrum<V> > &);
   private:
+    size_t nPhasors;
     T wfirst,wlast;
-    std::vector<std::pair<T,T> > wavelengths;
-    int nOver;
+    size_t nOver;
+    size_t nFFT=1;
     std::vector<T> fftData;
-    bool validateWavelengths;
-    size_t validatedSize;
+    void conf();
   };
 
   template<typename T>
-  void CalcPowerSpectrumFFT<T>::set_wavelength(T first, T last){
-    if(!std::isfinite(first) || !std::isfinite(last) ||
-       first <= 0 || last <= 0 || first == last)
-      throw std::invalid_argument("FFT needs distinct positive wavelength endpoints");
-    wfirst=first;
-    wlast=last;
-    wavelengths.clear();
-    validatedSize=0;
+  CalcPowerSpectrumFFT<T>::CalcPowerSpectrumFFT(const Phasors<T> &p, int n){
+    nPhasors=p.size();
+    nOver=static_cast<size_t>(n);
+    wfirst=p(0);
+    wlast=p(p.size()-1);
+    conf();
   }
-
-  template<typename T>
-  template<typename U>
-  void CalcPowerSpectrumFFT<T>::set_wavelength(
-      const std::vector<std::pair<U,U> > &){
-    // Channel-boundary semantics/resampling are not defined in the old code.
-    // Fail here rather than silently ignoring this configuration.
-    throw std::logic_error("FFT wavelength-pair configuration is not implemented");
-  }
-
+  
   template<typename T>
   template<typename U, typename V>
-  void CalcPowerSpectrumFFT<T>::operator()(const Phasors<U> &phasors,
-                                          PowerSpectrum<V> &pspec){
-    const size_t n=phasors.size();
-    if(n < 2) throw std::invalid_argument("FFT needs at least two phasors");
-    if(wfirst <= 0 || wlast <= 0)
-      throw std::logic_error("Call FFT set_wavelength(first,last) before calculation");
-    const double k0=1.0/static_cast<double>(wfirst);
-    const double dk=(1.0/static_cast<double>(wlast)-k0)/(n-1);
-    if(validateWavelengths && validatedSize != n){
-      // Allow rounding of wavelength coordinates to their declared precision.
-      const long double eps=std::max(
-          static_cast<long double>(std::numeric_limits<T>::epsilon()),
-          static_cast<long double>(std::numeric_limits<U>::epsilon()));
-      for(size_t i=0;i<n;i++){
-        if(!std::isfinite(phasors(i)) || phasors(i) <= 0)
-          throw std::invalid_argument("FFT wavelengths must be positive and finite");
-        const long double expected=k0+i*dk;
-        if(std::abs(1.0L/phasors(i)-expected) > 8*eps*std::abs(expected))
-          throw std::invalid_argument("FFT requires uniform wavenumbers matching its endpoints");
-      }
-      validatedSize=n; // Cache only a successful check of the entire grid.
-    }
+  void CalcPowerSpectrumFFT<T>::operator()(const Phasors<U> &ph,
+                                          PowerSpectrum<V> &ps){
+    // const size_t n=phasors.size();
+    // if(n < 2) throw std::invalid_argument("FFT needs at least two phasors");
+    // if(wfirst <= 0 || wlast <= 0)
+    //   throw std::logic_error("Call FFT set_wavelength(first,last) before calculation");
+    // const double k0=1.0/static_cast<double>(wfirst);
+    // const double dk=(1.0/static_cast<double>(wlast)-k0)/(n-1);
+    // if(validateWavelengths && validatedSize != n){
+    //   // Allow rounding of wavelength coordinates to their declared precision.
+    //   const long double eps=std::max(
+    //       static_cast<long double>(std::numeric_limits<T>::epsilon()),
+    //       static_cast<long double>(std::numeric_limits<U>::epsilon()));
+    //   for(size_t i=0;i<n;i++){
+    //     if(!std::isfinite(phasors(i)) || phasors(i) <= 0)
+    //       throw std::invalid_argument("FFT wavelengths must be positive and finite");
+    //     const long double expected=k0+i*dk;
+    //     if(std::abs(1.0L/phasors(i)-expected) > 8*eps*std::abs(expected))
+    //       throw std::invalid_argument("FFT requires uniform wavenumbers matching its endpoints");
+    //   }
+    //   validatedSize=n; // Cache only a successful check of the entire grid.
+    // }
 
-    const size_t limit=std::min(fftData.max_size()/2-1,
-        static_cast<size_t>(std::numeric_limits<unsigned long>::max()/2));
-    if(n > limit/static_cast<size_t>(nOver))
-      throw std::length_error("FFT size overflow");
-    const size_t required=n*static_cast<size_t>(nOver);
-    size_t nFFT=1; // Number of complex samples, including zero padding.
-    while(nFFT < required){
-      if(nFFT > limit/2) throw std::length_error("FFT size overflow");
-      nFFT*=2;
-    }
-    // four1 is one-based: provide a real dummy element, never data()-1.
-    fftData.assign(2*nFFT+1,T(0));
-    for(size_t i=0;i<n;i++){
-      fftData[2*i+1]=static_cast<T>(phasors[i].real());
-      fftData[2*i+2]=static_cast<T>(phasors[i].imag());
+    // const size_t limit=std::min(fftData.max_size()/2-1,
+    //     static_cast<size_t>(std::numeric_limits<unsigned long>::max()/2));
+    // if(n > limit/static_cast<size_t>(nOver))
+    //   throw std::length_error("FFT size overflow");
+    // const size_t required=n*static_cast<size_t>(nOver);
+    // size_t nFFT=1; // Number of complex samples, including zero padding.
+    // while(nFFT < required){
+    //   if(nFFT > limit/2) throw std::length_error("FFT size overflow");
+    //   nFFT*=2;
+    // }
+    // // four1 is one-based: provide a real dummy element, never data()-1.
+    // fftData.assign(2*nFFT+1,T(0));
+    T dk=(1.0/wlast-1.0/wfirst)/(nPhasors-1);
+    if(ph.size()!=nPhasors)
+      throw std::runtime_error(std::format("ph.size={} but nPhasors={}",
+					   ph.size(),nPhasors));
+			       
+    for(size_t i=0;i<nPhasors;i++){
+      fftData[2*i+1]=static_cast<T>(ph[i].real());
+      fftData[2*i+2]=static_cast<T>(ph[i].imag());
     }
     four1(fftData.data(),static_cast<unsigned long>(nFFT),1);
-    pspec.resize(nFFT);
-    pspec.name(phasors.name());
-    pspec.time(phasors.time());
+    ps.resize(nFFT);
+    ps.name(ph.name());
+    ps.time(ph.time());
     const double delayStep=1.0/(nFFT*dk);
     for(size_t i=0;i<nFFT;i++){
       // nFFT is a power of two, so wrapping needs no integer division.
       const size_t bin=(i+nFFT/2)&(nFFT-1);
       const double signedBin=static_cast<double>(i)-nFFT/2;
       const T re=fftData[2*bin+1], im=fftData[2*bin+2];
-      pspec[i]=static_cast<V>(re*re+im*im);
-      pspec(i)=static_cast<V>(signedBin*delayStep);
+      ps[i]=static_cast<V>(re*re+im*im);
+      ps(i)=static_cast<V>(signedBin*delayStep);
     }
     // Keep delay coordinates increasing for either wavelength ordering.
     if(dk < 0){
       for(size_t i=0;i<nFFT/2;i++){
-        std::swap(pspec[i],pspec[nFFT-1-i]);
-        std::swap(pspec(i),pspec(nFFT-1-i));
+        std::swap(ps[i],ps[nFFT-1-i]);
+        std::swap(ps(i),ps(nFFT-1-i));
       }
     }
   }
@@ -684,6 +664,14 @@ namespace amjInterferometry{
                                           std::vector<PowerSpectrum<V> > &ps){
     ps.resize(ph.size());
     for(size_t i=0;i<ph.size();i++) operator()(ph[i],ps[i]);
+  }
+
+  template<typename T>
+  void CalcPowerSpectrumFFT<T>::conf(){
+    size_t nrequired=nPhasors*nOver;
+    while(nFFT<nrequired)
+      nFFT*=2;
+    fftData.assign(2*nFFT+1,T(0));
   }
   
   //
@@ -764,18 +752,20 @@ namespace amjInterferometry{
   public:
     AnalyzePowerSpectrum():peak_width(40){};
     ~AnalyzePowerSpectrum(){};
-    template<typename U, typename V>
-    void operator()(const PowerSpectrum<U> &, V &SNR, V &delay);
+    template<typename U>
+    void operator()(const PowerSpectrum<U> &);
+    T delay(){return _delay;}
+    T snr(){return _snr;}
     template<typename U>
     void set_peak_width(U w){peak_width=w;}
   private:
     T peak_width;
+    T _snr,_delay;
   };
   
   template<typename T>
-  template<typename U, typename V>
-  void AnalyzePowerSpectrum<T>::operator()(const PowerSpectrum<U> &p, V &snr,
-					   V &delay){
+  template<typename U>
+  void AnalyzePowerSpectrum<T>::operator()(const PowerSpectrum<U> &p){
     int imax=-1;
     T peak=-1e31;
     
@@ -785,12 +775,12 @@ namespace amjInterferometry{
 	peak=p[i];
       }
     
-    delay=p(imax);
+    _delay=p(imax);
     
     int count=0;
     T v=0,v2=0;
     for(size_t i=0;i<p.size();i++)
-      if(p(i)<delay-peak_width/2||p(i)>delay+peak_width/2){
+      if(p(i)<_delay-peak_width/2||p(i)>_delay+peak_width/2){
 	count++;
 	v+=p[i];
 	v2+=p[i]*p[i];
@@ -798,56 +788,150 @@ namespace amjInterferometry{
 
     T mean=v/count;
     
-    snr=(peak-mean)/sqrt(v2/count-mean*mean);      
+    _snr=(peak-mean)/sqrt(v2/count-mean*mean);      
   }
   
   //
   // PowerSpectrum smoothing
   //
+  template<typename T=float>
+  class PowerSpectrumSmooth: public PowerSpectrum<T>{
+  public:
+    PowerSpectrumSmooth(){};
+    virtual ~PowerSpectrumSmooth(){};
+    virtual PowerSpectrumSmooth<T> &operator()(const PowerSpectrum<T> &)=0;
+    virtual void width(T)=0;
+    virtual T width() const =0;
+  };
+
+  //
+  // PowerSpectrumSmoothNone
+  template<typename T=float>
+  class PowerSpectrumSmoothNone: public PowerSpectrumSmooth<T>{
+  public:
+    PowerSpectrumSmoothNone(){};
+    ~PowerSpectrumSmoothNone(){};
+    virtual PowerSpectrumSmoothNone<T> &operator()(const PowerSpectrum<T> &) override;
+    virtual void width(T w) override {_width=w;}
+    virtual T width() const override {return _width;}
+  private:
+    T _width;
+  };
+
+  template<typename T>
+  PowerSpectrumSmoothNone<T> &PowerSpectrumSmoothNone<T>::operator()(const PowerSpectrum<T> &p){
+    for(size_t i=0;i<p.size();i++)
+      this->_power[i]=p[i];
+    return *this;
+  }
+  
+  //
+  // PowerSpectrumGaussian
+  //
+  template<typename T=float>
+  class PowerSpectrumSmoothGaussian: public PowerSpectrumSmooth<T>{
+  public:
+    PowerSpectrumSmoothGaussian()=default;
+    PowerSpectrumSmoothGaussian(T w):_width(w){};
+    ~PowerSpectrumSmoothGaussian()=default;
+    virtual PowerSpectrumSmoothGaussian<T> &operator()(const PowerSpectrum<T> &) override;
+    virtual void width(T w) override {_width=w;}
+    virtual T width() const override {return _width;}
+  private:
+    T _width;
+  };
+    
+  template<typename T>
+  PowerSpectrumSmoothGaussian<T> &PowerSpectrumSmoothGaussian<T>::operator()(const PowerSpectrum<T> &p){
+    for(size_t i=0;i<p.size();i++){
+      T weighted=0,weights=0;
+      for(size_t j=0;j<p.size();j++){
+	const T x=(p(j)-p(i))/this->_width/2;
+	const T weight=std::exp(-x*x/2);
+	weighted+=weight*p[j];
+	weights+=weight;
+      }
+      this->_power[i]=weighted/weights;
+    }
+    return *this;
+  }
+  
+  //
+  // PowerSpectrumSBoxcar
+  //
+  
+  template<typename T=float>
+  class PowerSpectrumSmoothBoxcar: public PowerSpectrumSmooth<T>{
+  public:
+    PowerSpectrumSmoothBoxcar()=default;
+    PowerSpectrumSmoothBoxcar(T w):_width(w){};
+    virtual ~PowerSpectrumSmoothBoxcar()=default;
+    virtual PowerSpectrumSmoothBoxcar<T> &operator()(const PowerSpectrum<T> &);
+    virtual void width(T w) override {_width=w;}
+    virtual T width() const override {return _width;}
+  private:
+    T _width;
+  };
+
+  template<typename T>
+  PowerSpectrumSmoothBoxcar<T> &PowerSpectrumSmoothBoxcar<T>::operator()(const PowerSpectrum<T> &p){
+    for(size_t i=0;i<p.size();i++){
+      T sum=0;
+      size_t n=0;
+      for(size_t j=0;j<p.size();j++){
+	if(std::abs(p(j)-p(i))<this->_width/2){
+	  sum+=p[j];
+	  n++;
+	}
+      }
+      this->_power[i]=sum/n;
+    }
+    return *this;
+  }
   
   // Gaussian
   // 1/\sqrt{2pi}/sigma*exp(-(x-mu)^2/2\sigma^2)
-  inline double gaussian(double x, double m, double s){
-    return 1.0/sqrt(2*M_PI)/s*exp(-(x-m)*(x-m)/2.0/s/s);
-  }
+  // inline double gaussian(double x, double m, double s){
+  //   return 1.0/sqrt(2*M_PI)/s*exp(-(x-m)*(x-m)/2.0/s/s);
+  // }
   
   // Gaussian smoothing
-  template<typename T, typename U>
-  PowerSpectrum<T> gsmooth(const PowerSpectrum<T> &p, U sigma){
-    if(!std::isfinite(sigma) || sigma <= 0)
-      throw std::invalid_argument("Gaussian width must be positive and finite");
-    PowerSpectrum<T> result=p;
-    for(size_t i=0;i<p.size();i++){
-      long double weighted=0, weights=0;
-      for(size_t j=0;j<p.size();j++){
-        const long double x=(static_cast<long double>(p(j))-p(i))/sigma;
-        const long double weight=std::exp(-x*x/2);
-        weighted+=weight*p[j];
-        weights+=weight;
-      }
-      result[i]=static_cast<T>(weighted/weights);
-    }
-    return result;
-  }
+  // template<typename T=float, typename U=float>
+  // PowerSpectrum<T> gsmooth(const PowerSpectrum<T> &p, U sigma){
+  //   if(!std::isfinite(sigma) || sigma <= 0)
+  //     throw std::invalid_argument("Gaussian width must be positive and finite");
+  //   PowerSpectrum<T> result=p;
+  //   for(size_t i=0;i<p.size();i++){
+  //     long double weighted=0, weights=0;
+  //     for(size_t j=0;j<p.size();j++){
+  //       const long double x=(static_cast<long double>(p(j))-p(i))/sigma;
+  //       const long double weight=std::exp(-x*x/2);
+  //       weighted+=weight*p[j];
+  //       weights+=weight;
+  //     }
+  //     result[i]=static_cast<T>(weighted/weights);
+  //   }
+  //   return result;
+  // }
 
   // Boxcar smoothing
-  template<typename T, typename U>
-  PowerSpectrum<T> bsmooth(const PowerSpectrum<T> &p, U w){
-    PowerSpectrum<T> _p=p;
-    double g,s;
-    for(size_t i=0;i<p.size();i++){
-      g=0;
-      s=0;
-      for(size_t j=0;j<p.size();j++){
-	if(fabs(p(j)-p(i))<w/2){
-	  g++;
-	  s+=p[j];
-	}
-      }
-      _p[i]=s/g;
-    }
-    return _p;
-  }
+  // template<typename T=float, typename U=float>
+  // PowerSpectrum<T> bsmooth(const PowerSpectrum<T> &p, U w){
+  //   PowerSpectrum<T> _p=p;
+  //   double g,s;
+  //   for(size_t i=0;i<p.size();i++){
+  //     g=0;
+  //     s=0;
+  //     for(size_t j=0;j<p.size();j++){
+  // 	if(fabs(p(j)-p(i))<w/2){
+  // 	  g++;
+  // 	  s+=p[j];
+  // 	}
+  //     }
+  //     _p[i]=s/g;
+  //   }
+  //   return _p;
+  // }
 
 
   //
