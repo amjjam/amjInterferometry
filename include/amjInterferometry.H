@@ -16,6 +16,7 @@
 #include <functional>
 #include <memory>
 #include <format>
+#include <numbers>
 
 #include <amjTime.H>
 
@@ -147,6 +148,9 @@ namespace amjInterferometry{
     return p-pos;
   }
 
+  //
+  // PhasorsAverage
+  //
   
   template<typename T=float>
   class PhasorsAverage: public Phasors<T>{
@@ -157,11 +161,15 @@ namespace amjInterferometry{
     PhasorsAverage()=default;
     explicit PhasorsAverage(const Phasors<T> &p):Phasors<T>(p){};
     virtual ~PhasorsAverage(){};
-    virtual bool add(const Phasors<T> &p);
+    virtual bool add(const Phasors<T> &p)=0;
     virtual double tavg()=0;
     virtual void tavg(double)=0;
   };
   
+  //
+  // PhasorsBoxcar
+  //
+
   template<typename T=float>
   class PhasorsBoxcar: public PhasorsAverage<T>{
     using PhasorsAverage<T>::_time;
@@ -228,6 +236,10 @@ namespace amjInterferometry{
     }
   }
 
+  //
+  // PhasorsLeakyBox
+  //
+  
   template<typename T=float>
   class PhasorsLeakyBox:public PhasorsAverage<T>{
     using PhasorsAverage<T>::_time;
@@ -386,6 +398,7 @@ namespace amjInterferometry{
     using PowerSpectrum<T>::_time;
     using PowerSpectrum<T>::_delay;
     using PowerSpectrum<T>::_power;
+    bool update(const PowerSpectrum<T>&);
   public:
     PowerSpectrumAverage(){}
     virtual ~PowerSpectrumAverage(){}
@@ -393,6 +406,18 @@ namespace amjInterferometry{
     virtual double tavg()=0;
     virtual void tavg(double)=0;
   };
+
+  template<typename T>
+  bool PowerSpectrumAverage<T>::update(const PowerSpectrum<T>& p){
+    if(_name==p.name()&&this->same_delay_grid(p))
+      return false;
+    _delay.resize(p.size());
+    for(size_t i=0;i<_delay.size();i++)
+      _delay[i]=p(i);
+    _power.resize(p.size());
+    _name=p.name();
+    return true;
+  }
 
   //
   // PowerSpectrumBoxcar
@@ -408,14 +433,14 @@ namespace amjInterferometry{
     PowerSpectrumBoxcar(double w=1){tavg(w);}
     virtual ~PowerSpectrumBoxcar(){};
     double tavg() override {return w;}
-    void tavg(double);
+    void tavg(double) override;
     PowerSpectrumBoxcar<T> &operator()(const PowerSpectrum<T>&) override;
   private:
     double w;
-    size_t n,index;
+    size_t n=1,index=0;
     std::vector<std::vector<T>> _h;
     void update_average();
-    bool update(const PowerSpectrum<T> &);
+    //    bool update(const PowerSpectrum<T> &);
   };
 
   template<typename T>
@@ -436,8 +461,7 @@ namespace amjInterferometry{
 
   template<typename T>
   PowerSpectrumBoxcar<T> &PowerSpectrumBoxcar<T>::operator()(const PowerSpectrum<T>& p){
-    bool changed=update(p);
-    if(changed){
+    if(this->update(p)){
       _h.clear();
       index=0;
     }
@@ -463,18 +487,18 @@ namespace amjInterferometry{
     }
   }
 
-  template<typename T>
-  bool PowerSpectrumBoxcar<T>::update(const PowerSpectrum<T> &p){
-    if(p.size()==_delay.size()&&p(0)==_delay[0]
-       &&p(p.size())=_delay[_delay.size()]&&_name=p.name())
-      return false;
-    _delay.resize(p.size());
-    for(size_t i=0;i<_delay.size();i++)
-      _delay[i]=p(i);
-    _power.resize(p.size());
-    _name=p.name();
-    return true;
-  }
+  // template<typename T>
+  // bool PowerSpectrumBoxcar<T>::update(const PowerSpectrum<T> &p){
+  //   if(p.size()==_delay.size()&&p(0)==_delay[0]
+  //      &&p(p.size())==_delay[_delay.size()]&&_name==p.name())
+  //     return false;
+  //   _delay.resize(p.size());
+  //   for(size_t i=0;i<_delay.size();i++)
+  //     _delay[i]=p(i);
+  //   _power.resize(p.size());
+  //   _name=p.name();
+  //   return true;
+  // }
   
   //
   // PowerSpectrumLeakyBox
@@ -490,11 +514,11 @@ namespace amjInterferometry{
     PowerSpectrumLeakyBox(double w=1){tavg(w);}
     virtual ~PowerSpectrumLeakyBox(){};
     double tavg() override {return w;}
-    void tavg(double);
+    void tavg(double) override;
     PowerSpectrumLeakyBox<T> &operator()(const PowerSpectrum<T>&) override;
   private:
     double w;
-    bool update(const PowerSpectrum<T> &);
+    //    bool update(const PowerSpectrum<T> &);
   };
 
   template<typename T>
@@ -506,28 +530,31 @@ namespace amjInterferometry{
 
   template<typename T>
   PowerSpectrumLeakyBox<T> &PowerSpectrumLeakyBox<T>::operator()(const PowerSpectrum<T>& p){
-    bool changed=update(p);
-    double alpha=1.0/w;
-    if(changed)
-      alpha=1;
-    for(size_t i=0;i<_power.size();++i)
-      _power[i]=alpha*p[i]+(1-alpha)*_power[i];
+    if(this->update(p)||w==1){
+      for(size_t i=0;i<_power.size();++i)
+        _power[i]=p[i];
+    }
+    else{
+      const double alpha=1.0/w;
+      for(size_t i=0;i<_power.size();++i)
+        _power[i]=alpha*p[i]+(1-alpha)*_power[i];
+    }
     _time=p.time();
     return *this;
   }
 
-  template<typename T>
-  bool PowerSpectrumLeakyBox<T>::update(const PowerSpectrum<T> &p){
-    if(p.size()==_delay.size()&&p(0)==_delay[0]
-       &&p(p.size())=_delay[_delay.size()]&&_name=p.name())
-      return false;
-    _delay.resize(p.size());
-    for(size_t i=0;i<_delay.size();i++)
-      _delay[i]=p(i);
-    _power.resize(p.size());
-    _name=p.name();
-    return true;
-  }
+  // template<typename T>
+  // bool PowerSpectrumLeakyBox<T>::update(const PowerSpectrum<T> &p){
+  //   if(p.size()==_delay.size()&&p(0)==_delay[0]
+  //      &&p(p.size())==_delay[_delay.size()]&&_name==p.name())
+  //     return false;
+  //   _delay.resize(p.size());
+  //   for(size_t i=0;i<_delay.size();i++)
+  //     _delay[i]=p(i);
+  //   _power.resize(p.size());
+  //   _name=p.name();
+  //   return true;
+  // }
 
   //
   // CalcPowerSpectrum
@@ -536,19 +563,14 @@ namespace amjInterferometry{
   template<typename T=float>
   class CalcPowerSpectrum{
   public:
-    CalcPowerSpectrum(){};
-    virtual ~CalcPowerSpectrum()=0;
-    template<typename U, typename V>
-    void operator()(const Phasors<U> &, PowerSpectrum<V> &);
-    template<typename U, typename V>
-    void operator()(const std::vector<Phasors<U> > &,
-		    std::vector<PowerSpectrum<V> > &);
+    CalcPowerSpectrum()=default;
+    virtual ~CalcPowerSpectrum()=default;
+    virtual void operator()(const Phasors<T> &, PowerSpectrum<T> &)=0;
+    virtual void operator()(const std::vector<Phasors<T>> &,
+			    std::vector<PowerSpectrum<T>> &)=0;
   private:
-
   };
 
-  template<typename T>
-  CalcPowerSpectrum<T>::~CalcPowerSpectrum() {}
   
   //
   // CalcPowerSpectrumFFT
@@ -567,11 +589,9 @@ namespace amjInterferometry{
     void set_nphasors(int n){nPhasors=static_cast<size_t>(std::max(2,n));
       conf();}
     void set_wavelength(T w0, T w1){wfirst=w0; wlast=21; conf();}
-    template<typename U, typename V>
-    void operator()(const Phasors<U> &, PowerSpectrum<V> &);
-    template<typename U, typename V>
-    void operator()(const std::vector<Phasors<U> > &,
-			    std::vector<PowerSpectrum<V> > &);
+    void operator()(const Phasors<T> &, PowerSpectrum<T> &) override;
+    void operator()(const std::vector<Phasors<T>> &,
+		    std::vector<PowerSpectrum<T>> &) override;
   private:
     size_t nPhasors;
     T wfirst,wlast;
@@ -591,9 +611,8 @@ namespace amjInterferometry{
   }
   
   template<typename T>
-  template<typename U, typename V>
-  void CalcPowerSpectrumFFT<T>::operator()(const Phasors<U> &ph,
-                                          PowerSpectrum<V> &ps){
+  void CalcPowerSpectrumFFT<T>::operator()(const Phasors<T> &ph,
+					   PowerSpectrum<T> &ps){
     // const size_t n=phasors.size();
     // if(n < 2) throw std::invalid_argument("FFT needs at least two phasors");
     // if(wfirst <= 0 || wlast <= 0)
@@ -646,8 +665,8 @@ namespace amjInterferometry{
       const size_t bin=(i+nFFT/2)&(nFFT-1);
       const double signedBin=static_cast<double>(i)-nFFT/2;
       const T re=fftData[2*bin+1], im=fftData[2*bin+2];
-      ps[i]=static_cast<V>(re*re+im*im);
-      ps(i)=static_cast<V>(signedBin*delayStep);
+      ps[i]=static_cast<T>(re*re+im*im);
+      ps(i)=static_cast<T>(signedBin*delayStep);
     }
     // Keep delay coordinates increasing for either wavelength ordering.
     if(dk < 0){
@@ -659,9 +678,8 @@ namespace amjInterferometry{
   }
 
   template<typename T>
-  template<typename U, typename V>
-  void CalcPowerSpectrumFFT<T>::operator()(const std::vector<Phasors<U> > &ph,
-                                          std::vector<PowerSpectrum<V> > &ps){
+  void CalcPowerSpectrumFFT<T>::operator()(const std::vector<Phasors<T> > &ph,
+					   std::vector<PowerSpectrum<T> > &ps){
     ps.resize(ph.size());
     for(size_t i=0;i<ph.size();i++) operator()(ph[i],ps[i]);
   }
@@ -682,16 +700,13 @@ namespace amjInterferometry{
   class CalcPowerSpectrumDFT: public CalcPowerSpectrum<T>{
   public:
     CalcPowerSpectrumDFT(){};
+    CalcPowerSpectrumDFT(const std::vector<T> &d){set_delay(d);}
     ~CalcPowerSpectrumDFT(){};
     template<typename U>
     void set_delay(const std::vector<U> &);
-    //template<typename U>
-    //void set_delay(const std::vector<std::vector<U> > &);
-    template<typename U, typename V>
-    void operator()(const Phasors<U> &, PowerSpectrum<V> &);
-    template<typename U, typename V>
-    void operator()(const std::vector<Phasors<U> > &,
-			    std::vector<PowerSpectrum<V> > &);
+    virtual void operator()(const Phasors<T> &, PowerSpectrum<T> &) override;
+    void operator()(const std::vector<Phasors<T>> &,
+		    std::vector<PowerSpectrum<T>> &) override;
   private:
     std::vector<T> delay;
   };
@@ -699,50 +714,42 @@ namespace amjInterferometry{
   template<typename T>
   template<typename U>
   void CalcPowerSpectrumDFT<T>::set_delay(const std::vector<U> &d){
-    if(d.empty()) throw std::invalid_argument("DFT delay grid must not be empty");
-    std::vector<T> converted(d.size());
-    for(size_t i=0;i<d.size();i++){
-      converted[i]=static_cast<T>(d[i]);
-      if(!std::isfinite(converted[i]))
-        throw std::invalid_argument("DFT delays must be finite");
-    }
-    delay.swap(converted);
+    delay.resize(d.size());
+    for(size_t i=0;i<d.size();i++)
+      delay[i]=static_cast<T>(d[i]);
   }
 
   template<typename T>
-  template<typename U, typename V>
-  void CalcPowerSpectrumDFT<T>::operator()(const Phasors<U> &phasors,
-                                          PowerSpectrum<V> &pspec){
-    if(delay.empty()) throw std::logic_error("Configure the DFT delay grid first");
-    if(phasors.size()==0) throw std::invalid_argument("DFT input must not be empty");
-    // Real-time path: callers provide finite phasors and positive wavelengths.
-    pspec.name(phasors.name());
-    pspec.time(phasors.time());
-    pspec.resize(delay.size());
-    const double twoPi=2*std::acos(-1.0);
+  void CalcPowerSpectrumDFT<T>::operator()(const Phasors<T> &ph,
+					   PowerSpectrum<T> &ps){
+    if(delay.empty())
+      throw std::logic_error("Configure the DFT delay grid first");
+    if(ph.size()==0)
+      throw std::invalid_argument("DFT input must not be empty");
+    ps.name(ph.name());
+    ps.time(ph.time());
+    ps.resize(delay.size());
+    const double twoPi=2*std::numbers::pi;
     for(size_t i=0;i<delay.size();i++){
-      pspec(i)=static_cast<V>(delay[i]);
-      // Retain the original arithmetic: double phase/trigonometry,
-      // input-precision rotations, and T-precision accumulation.
+      ps(i)=static_cast<T>(delay[i]);
       std::complex<T> sum(0,0);
-      std::complex<U> rot;
-      for(size_t j=0;j<phasors.size();j++){
-        rot=std::polar(1.0,twoPi*delay[i]/phasors(j));
-        sum+=phasors[j]*rot;
+      std::complex<T> rot;
+      for(size_t j=0;j<ph.size();j++){
+        rot=std::polar(1.0,twoPi*delay[i]/ph(j));
+        sum+=ph[j]*rot;
       }
-      pspec[i]=static_cast<V>(std::norm(sum));
+      ps[i]=static_cast<T>(std::norm(sum));
     }
   }
-
+  
   template<typename T>
-  template<typename U, typename V>
-  void CalcPowerSpectrumDFT<T>::operator()(const std::vector<Phasors<U> > &ph,
-					   std::vector<PowerSpectrum<V> > &ps){
+  void CalcPowerSpectrumDFT<T>::operator()(const std::vector<Phasors<T> > &ph,
+					   std::vector<PowerSpectrum<T> > &ps){
     ps.resize(ph.size());
     for(size_t i=0;i<ph.size();i++)
       operator()(ph[i],ps[i]);
   }
-
+  
   //
   // AnalyzePowerSpectrum
   //
