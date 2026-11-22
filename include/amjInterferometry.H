@@ -804,11 +804,16 @@ namespace amjInterferometry{
   template<typename T=float>
   class PowerSpectrumSmooth: public PowerSpectrum<T>{
   public:
-    PowerSpectrumSmooth(){};
-    virtual ~PowerSpectrumSmooth(){};
+    //    PowerSpectrumSmooth(){};
+    //virtual ~PowerSpectrumSmooth(){};
+    PowerSpectrumSmooth(T w=0):_width(w){}
+    virtual ~PowerSpectrumSmooth()=default;
+    using PowerSpectrum<T>::operator();
     virtual PowerSpectrumSmooth<T> &operator()(const PowerSpectrum<T> &)=0;
-    virtual void width(T)=0;
-    virtual T width() const =0;
+    virtual void width(T w){_width=w;};
+    virtual T width() const {return _width;};
+  protected:
+    T _width;
   };
 
   //
@@ -816,19 +821,18 @@ namespace amjInterferometry{
   template<typename T=float>
   class PowerSpectrumSmoothNone: public PowerSpectrumSmooth<T>{
   public:
-    PowerSpectrumSmoothNone(){};
-    ~PowerSpectrumSmoothNone(){};
-    virtual PowerSpectrumSmoothNone<T> &operator()(const PowerSpectrum<T> &) override;
-    virtual void width(T w) override {_width=w;}
-    virtual T width() const override {return _width;}
-  private:
-    T _width;
+    //PowerSpectrumSmoothNone(){};
+    //~PowerSpectrumSmoothNone(){};
+    using PowerSpectrumSmooth<T>::PowerSpectrumSmooth;
+    using PowerSpectrumSmooth<T>::operator();
+    PowerSpectrumSmoothNone<T> &operator()(const PowerSpectrum<T> &) override;
+    //virtual void width(T w) override {_width=w;}
+    //virtual T width() const override {return _width;}
   };
 
   template<typename T>
   PowerSpectrumSmoothNone<T> &PowerSpectrumSmoothNone<T>::operator()(const PowerSpectrum<T> &p){
-    for(size_t i=0;i<p.size();i++)
-      this->_power[i]=p[i];
+    PowerSpectrum<T>::operator=(p);
     return *this;
   }
   
@@ -838,18 +842,21 @@ namespace amjInterferometry{
   template<typename T=float>
   class PowerSpectrumSmoothGaussian: public PowerSpectrumSmooth<T>{
   public:
-    PowerSpectrumSmoothGaussian()=default;
-    PowerSpectrumSmoothGaussian(T w):_width(w){};
-    ~PowerSpectrumSmoothGaussian()=default;
-    virtual PowerSpectrumSmoothGaussian<T> &operator()(const PowerSpectrum<T> &) override;
-    virtual void width(T w) override {_width=w;}
-    virtual T width() const override {return _width;}
-  private:
-    T _width;
+    //PowerSpectrumSmoothGaussian()=default;
+    //PowerSpectrumSmoothGaussian(T w):_width(w){};
+    //~PowerSpectrumSmoothGaussian()=default;
+    using PowerSpectrumSmooth<T>::PowerSpectrumSmooth;
+    using PowerSpectrumSmooth<T>::operator();
+    PowerSpectrumSmoothGaussian<T> &operator()(const PowerSpectrum<T> &) override;
+    //virtual void width(T w) override {_width=w;}
+    //virtual T width() const override {return _width;}
+    //private:
+    //T _width;
   };
     
   template<typename T>
   PowerSpectrumSmoothGaussian<T> &PowerSpectrumSmoothGaussian<T>::operator()(const PowerSpectrum<T> &p){
+    PowerSpectrum<T>::operator=(p);
     for(size_t i=0;i<p.size();i++){
       T weighted=0,weights=0;
       for(size_t j=0;j<p.size();j++){
@@ -864,29 +871,32 @@ namespace amjInterferometry{
   }
   
   //
-  // PowerSpectrumSBoxcar
+  // PowerSpectrumSmoothBoxcar
   //
   
   template<typename T=float>
   class PowerSpectrumSmoothBoxcar: public PowerSpectrumSmooth<T>{
   public:
-    PowerSpectrumSmoothBoxcar()=default;
-    PowerSpectrumSmoothBoxcar(T w):_width(w){};
-    virtual ~PowerSpectrumSmoothBoxcar()=default;
-    virtual PowerSpectrumSmoothBoxcar<T> &operator()(const PowerSpectrum<T> &);
-    virtual void width(T w) override {_width=w;}
-    virtual T width() const override {return _width;}
-  private:
-    T _width;
+    //PowerSpectrumSmoothBoxcar()=default;
+    //PowerSpectrumSmoothBoxcar(T w):_width(w){};
+    //virtual ~PowerSpectrumSmoothBoxcar()=default;
+    using PowerSpectrumSmooth<T>::PowerSpectrumSmooth;
+    using PowerSpectrumSmooth<T>::operator();
+    PowerSpectrumSmoothBoxcar<T> &operator()(const PowerSpectrum<T> &) override;
+    //virtual void width(T w) override {_width=w;}
+    //virtual T width() const override {return _width;}
+    //private:
+    //T _width;
   };
 
   template<typename T>
   PowerSpectrumSmoothBoxcar<T> &PowerSpectrumSmoothBoxcar<T>::operator()(const PowerSpectrum<T> &p){
+    PowerSpectrum<T>::operator=(p);
     for(size_t i=0;i<p.size();i++){
       T sum=0;
       size_t n=0;
       for(size_t j=0;j<p.size();j++){
-	if(std::abs(p(j)-p(i))<this->_width/2){
+	if(std::abs(p(j)-p(i))<=this->_width/2){
 	  sum+=p[j];
 	  n++;
 	}
