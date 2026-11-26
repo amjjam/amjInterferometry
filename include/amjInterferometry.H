@@ -165,6 +165,24 @@ namespace amjInterferometry{
     virtual double tavg()=0;
     virtual void tavg(double)=0;
   };
+
+  //
+  // PhasorsAverageNone
+  //
+  
+  template<typename T=float>
+  class PhasorsAverageNone: public PhasorsAverage<T>{
+  public:
+    explicit PhasorsAverageNone(const Phasors<T>& p):PhasorsAverage<T>(p){}
+
+    bool add(const Phasors<T>& p) override{
+      Phasors<T>::operator=(p);
+      return true;
+    }
+
+    double tavg() override {return 1;}
+    void tavg(double) override {}
+  };
   
   //
   // PhasorsBoxcar
